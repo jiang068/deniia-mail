@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deniia Mail</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="app.js" defer></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div id="app" class="max-w-4xl mx-auto p-4">
+
+    <!-- ========== Config overlay (first visit) ========== -->
+    <div id="config-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <h2 class="text-lg font-bold mb-2">Connect to Server</h2>
+        <p class="text-sm text-gray-500 mb-4">Enter your Worker URL to get started.</p>
+        <input id="config-url" type="url" placeholder="https://webmail-backend.xxxxx.workers.dev" class="w-full border rounded-lg px-4 py-2 mb-3">
+        <div id="config-error" class="text-red-500 text-sm mb-3 hidden"></div>
+        <button onclick="saveConfig()" class="w-full bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700">Connect</button>
+        <p class="text-xs text-gray-400 mt-3">You can change this later from Settings.</p>
+      </div>
+    </div>
+
+    <!-- ========== Settings overlay (reconfigure URL) ========== -->
+    <div id="settings-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4">
+        <h2 class="text-lg font-bold mb-2">Settings</h2>
+        <label class="text-sm text-gray-500">Backend API URL:</label>
+        <input id="settings-url" type="url" class="w-full border rounded-lg px-4 py-2 mt-1 mb-4">
+        <div class="flex gap-2 justify-end">
+          <button onclick="document.getElementById('settings-overlay').classList.add('hidden')" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 text-sm">Cancel</button>
+          <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== Login / Setup ========== -->
+    <div id="auth-view" class="mt-16">
+      <div id="setup-view" class="hidden bg-white rounded-2xl shadow-lg p-8 max-w-md mx-auto mb-6">
+        <h2 class="text-xl font-bold text-center mb-2">System Setup</h2>
+        <p class="text-sm text-gray-500 text-center mb-4">No admin account found. Initialize the system to get admin credentials.</p>
+        <button id="setup-btn" onclick="setupAdmin()" class="w-full bg-green-600 text-white rounded-lg py-2 hover:bg-green-700">Initialize Admin</button>
+        <div id="setup-result" class="hidden mt-4 p-4 bg-yellow-50 border rounded-lg">
+          <p class="text-sm font-bold mb-2">Save these credentials!</p>
+          <p class="text-sm">Username: <span id="setup-username" class="font-mono bg-gray-100 px-1"></span></p>
+          <p class="text-sm">Password: <span id="setup-password" class="font-mono bg-gray-100 px-1"></span></p>
+          <p class="text-sm">Email: <span id="setup-email" class="font-mono bg-gray-100 px-1"></span></p>
+        </div>
+      </div>
+
+      <div id="login-view" class="bg-white rounded-2xl shadow-lg p-8 max-w-md mx-auto">
+        <h1 class="text-2xl font-bold text-center mb-6">Deniia Mail</h1>
+        <div id="auth-error" class="text-red-500 text-sm mb-3 hidden"></div>
+        <input id="login-username" type="text" placeholder="Username" class="w-full border rounded-lg px-4 py-2 mb-3">
+        <input id="login-password" type="password" placeholder="Password" class="w-full border rounded-lg px-4 py-2 mb-4">
+        <div class="flex gap-2">
+          <button onclick="login()" class="flex-1 bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700">Login</button>
+          <button onclick="register()" class="flex-1 bg-gray-200 rounded-lg py-2 hover:bg-gray-300">Register</button>
+        </div>
+        <div class="text-center mt-4">
+          <button onclick="showSettings()" class="text-xs text-gray-400 hover:text-gray-600 underline">Server Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== Main mail view ========== -->
+    <div id="mail-view" class="hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-6 mb-4 flex items-center justify-between">
+        <div>
+          <span class="text-lg font-semibold">Deniia Mail</span>
+          <span id="user-email" class="ml-4 text-sm text-gray-500"></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <button onclick="showSettings()" class="text-xs text-gray-400 hover:text-gray-600 underline">Server</button>
+          <button id="admin-btn" onclick="showAdminPanel()" class="hidden text-sm text-gray-500 hover:text-gray-700 px-3 py-1 border rounded-lg">Admin</button>
+          <button onclick="logout()" class="text-sm text-red-500 hover:underline">Logout</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl shadow-lg p-4">
+          <button onclick="compose()" class="w-full bg-blue-600 text-white rounded-lg py-2 mb-4 hover:bg-blue-700">Write</button>
+          <div id="mailbox-list" class="space-y-1">
+            <div class="p-2 text-sm text-gray-400">Loading...</div>
+          </div>
+        </div>
+
+        <div class="md:col-span-2">
+          <div id="email-list" class="bg-white rounded-2xl shadow-lg">
+            <div class="p-6 text-center text-gray-400">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== Admin Panel ========== -->
+    <div id="admin-view" class="hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-6 mb-4 flex items-center justify-between">
+        <span class="text-lg font-semibold">Admin Panel</span>
+        <button onclick="showMailView()" class="text-sm text-blue-500 hover:underline">&larr; Back to Mail</button>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-6 mb-4">
+        <h3 class="font-semibold mb-3">Settings</h3>
+        <div class="mb-4">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input id="reg-toggle" type="checkbox" onchange="toggleRegistration()" class="toggle w-10 h-5 rounded-full border cursor-pointer">
+            <span class="text-sm">Registration: <span id="reg-status">Closed</span></span>
+          </label>
+          <p class="text-xs text-gray-400 mt-1 ml-1">When disabled, new users cannot register.</p>
+        </div>
+        <div>
+          <label class="text-sm">Daily send limit per user:</label>
+          <div class="flex gap-2 mt-1">
+            <input id="send-limit-input" type="number" min="1" max="10000" class="w-24 border rounded-lg px-3 py-1 text-sm">
+            <button onclick="updateSendLimit()" class="px-3 py-1 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-6">
+        <h3 class="font-semibold mb-3">Users</h3>
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b text-sm text-gray-500">
+              <th class="p-2">Username</th>
+              <th class="p-2">Email</th>
+              <th class="p-2">Role</th>
+              <th class="p-2">Created</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody">
+            <tr><td colspan="4" class="p-4 text-center text-gray-400">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ========== Compose modal ========== -->
+    <div id="compose-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg mx-4">
+        <h2 class="text-lg font-bold mb-4">New Message</h2>
+        <input id="compose-to" type="email" placeholder="To: recipient@example.com" class="w-full border rounded-lg px-4 py-2 mb-3">
+        <input id="compose-subject" type="text" placeholder="Subject" class="w-full border rounded-lg px-4 py-2 mb-3">
+        <textarea id="compose-body" rows="8" placeholder="Message" class="w-full border rounded-lg px-4 py-2 mb-4 resize-none"></textarea>
+        <div class="mb-3 text-xs text-gray-400">Sending via Resend</div>
+        <div id="compose-error" class="text-red-500 text-sm mb-3 hidden"></div>
+        <div class="flex gap-2 justify-end">
+          <button onclick="closeCompose()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 text-sm">Cancel</button>
+          <button id="send-btn" onclick="sendEmail()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">Send</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+name = "webmail-backend"
+main = "worker.js"
+compatibility_date = "2025-04-01"
+
+# D1 数据库绑定
+# 创建数据库: npx wrangler d1 create mail-db
+# 然后把输出的 id 填到下面
+[[d1_databases]]
+binding = "DB"
+database_name = "mail-db"
+database_id = "<your-database-id>"
+
+# 环境变量
+[vars]
+DOMAIN = "yourdomain.com"
