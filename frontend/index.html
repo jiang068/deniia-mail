@@ -10,28 +10,12 @@
 <body class="bg-gray-100 min-h-screen">
   <div id="app" class="max-w-4xl mx-auto p-4">
 
-    <!-- ========== Config overlay (first visit) ========== -->
-    <div id="config-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <!-- ========== Config error ========== -->
+    <div id="config-error" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
       <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4">
-        <h2 class="text-lg font-bold mb-2">Connect to Server</h2>
-        <p class="text-sm text-gray-500 mb-4">Enter your Worker URL to get started.</p>
-        <input id="config-url" type="url" placeholder="https://webmail-backend.xxxxx.workers.dev" class="w-full border rounded-lg px-4 py-2 mb-3">
-        <div id="config-error" class="text-red-500 text-sm mb-3 hidden"></div>
-        <button onclick="saveConfig()" class="w-full bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700">Connect</button>
-        <p class="text-xs text-gray-400 mt-3">You can change this later from Settings.</p>
-      </div>
-    </div>
-
-    <!-- ========== Settings overlay (reconfigure URL) ========== -->
-    <div id="settings-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-      <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md mx-4">
-        <h2 class="text-lg font-bold mb-2">Settings</h2>
-        <label class="text-sm text-gray-500">Backend API URL:</label>
-        <input id="settings-url" type="url" class="w-full border rounded-lg px-4 py-2 mt-1 mb-4">
-        <div class="flex gap-2 justify-end">
-          <button onclick="document.getElementById('settings-overlay').classList.add('hidden')" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 text-sm">Cancel</button>
-          <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">Save</button>
-        </div>
+        <h2 class="text-lg font-bold mb-2 text-red-600">Configuration Error</h2>
+        <p id="config-error-msg" class="text-sm text-gray-600 mb-3"></p>
+        <p class="text-xs text-gray-400">Create <code class="bg-gray-100 px-1 rounded">config.json</code> in the same directory with: <code class="bg-gray-100 px-1 rounded">{"api_base": "https://your-worker.workers.dev"}</code></p>
       </div>
     </div>
 
@@ -58,9 +42,6 @@
           <button onclick="login()" class="flex-1 bg-blue-600 text-white rounded-lg py-2 hover:bg-blue-700">Login</button>
           <button onclick="register()" class="flex-1 bg-gray-200 rounded-lg py-2 hover:bg-gray-300">Register</button>
         </div>
-        <div class="text-center mt-4">
-          <button onclick="showSettings()" class="text-xs text-gray-400 hover:text-gray-600 underline">Server Settings</button>
-        </div>
       </div>
     </div>
 
@@ -72,7 +53,6 @@
           <span id="user-email" class="ml-4 text-sm text-gray-500"></span>
         </div>
         <div class="flex gap-2 items-center">
-          <button onclick="showSettings()" class="text-xs text-gray-400 hover:text-gray-600 underline">Server</button>
           <button id="admin-btn" onclick="showAdminPanel()" class="hidden text-sm text-gray-500 hover:text-gray-700 px-3 py-1 border rounded-lg">Admin</button>
           <button onclick="logout()" class="text-sm text-red-500 hover:underline">Logout</button>
         </div>

@@ -1,18 +1,4 @@
-/* API_BASE 解析链：
- *   1. localStorage.getItem('deniia_api_base') — 本地开发或 Pages 部署后手动设置
- *   2. 未设置则弹出配置界面引导用户填写
- */
 let API = '';
-
-function resolveApiBase() {
-  const stored = localStorage.getItem('deniia_api_base');
-  if (stored) {
-    API = stored.replace(/\/+$/, '') + '/api';
-    return true;
-  }
-  return false;
-}
-
 let token = localStorage.getItem('token');
 let currentUser = null;
 let mailboxes = [];
@@ -24,26 +10,6 @@ async function api(path, opts = {}) {
   const res = await fetch(API + path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
-}
-
-// ======================== Config prompt ========================
-
-function showConfigPrompt() {
-  document.getElementById('config-overlay').classList.remove('hidden');
-  document.getElementById('config-url').focus();
-}
-
-function saveConfig() {
-  const url = document.getElementById('config-url').value.trim().replace(/\/+$/, '');
-  if (!url || !url.startsWith('http')) {
-    document.getElementById('config-error').textContent = 'Please enter a valid URL starting with http:// or https://';
-    document.getElementById('config-error').classList.remove('hidden');
-    return;
-  }
-  localStorage.setItem('deniia_api_base', url);
-  document.getElementById('config-overlay').classList.add('hidden');
-  API = url + '/api';
-  init();
 }
 
 // ======================== Auth ========================
@@ -320,23 +286,6 @@ async function updateSendLimit() {
   }
 }
 
-// ======================== Reconfigure ========================
-
-function showSettings() {
-  document.getElementById('settings-overlay').classList.remove('hidden');
-  document.getElementById('settings-url').value = localStorage.getItem('deniia_api_base') || '';
-}
-
-function saveSettings() {
-  const url = document.getElementById('settings-url').value.trim().replace(/\/+$/, '');
-  if (url && url.startsWith('http')) {
-    localStorage.setItem('deniia_api_base', url);
-    API = url + '/api';
-  }
-  document.getElementById('settings-overlay').classList.add('hidden');
-  location.reload();
-}
-
 // ======================== Utils ========================
 
 function esc(s) {
@@ -348,8 +297,16 @@ function esc(s) {
 // ======================== Init ========================
 
 async function init() {
-  if (!resolveApiBase()) {
-    showConfigPrompt();
+  try {
+    const res = await fetch('config.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const config = await res.json();
+    if (!config.api_base) throw new Error('api_base not set');
+    API = config.api_base.replace(/\/+$/, '') + '/api';
+  } catch (e) {
+    document.getElementById('config-error-msg').textContent =
+      'Failed to load config.json. Make sure it exists with a valid "api_base" field.';
+    document.getElementById('config-error').classList.remove('hidden');
     return;
   }
 

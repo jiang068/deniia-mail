@@ -1,7 +1,7 @@
 # Deniia Mail — Frontend
 
 Deniia Mail 的网页前端，纯原生 HTML + JavaScript，无框架依赖。  
-连接 Cloudflare Worker 后端，提供网页邮箱操作界面。
+通过 `config.json` 文件配置后端 Worker 地址，部署到任意静态托管服务即可使用。
 
 ---
 
@@ -17,7 +17,6 @@ Deniia Mail 的网页前端，纯原生 HTML + JavaScript，无框架依赖。
   - 开关注册
   - 配置每日发件限额
   - 查看用户列表
-- **服务器配置**：首次访问时填写后端 URL，随时可修改
 
 ---
 
@@ -27,69 +26,60 @@ Deniia Mail 的网页前端，纯原生 HTML + JavaScript，无框架依赖。
 |------|------|
 | UI | 原生 HTML5 + Tailwind CSS (CDN) |
 | 交互 | 原生 JavaScript (ES6) |
-| 存储 | 浏览器 localStorage（token、API 地址） |
-| 部署 | 任意静态托管（http-server / Pages / S3 / 自建） |
+| 存储 | 浏览器 localStorage（仅 token） |
+| 部署 | 任意静态托管（Pages / S3 / 自建等） |
 
 ---
 
 ## 部署教程
 
-### 方式一：本地开发
+### 1. 创建 config.json
 
-```bash
-# 任意 HTTP Server 启动
-npx http-server .
+`config.json` 已加入 `.gitignore`，不会提交到仓库。你需要手动创建它：
 
-# 浏览器访问 http://localhost:8080
+```json
+{
+  "api_base": "https://webmail-backend.xxxxx.workers.dev"
+}
 ```
 
-首次打开会弹出配置框，填入后端 Worker URL（如 `https://webmail-backend.xxxxx.workers.dev`）。  
-URL 会存入浏览器 `localStorage`，下次访问不再提示。
-
-### 方式二：Cloudflare Pages
+可以复制 `config.json.example` 然后修改：
 
 ```bash
-# 1. 安装 Wrangler（如果未安装）
-npm install -g wrangler
+cp config.json.example config.json
+# 编辑 config.json，填入你的 Worker URL
+```
 
-# 2. 登录
-npx wrangler login
+### 2. 部署
 
-# 3. 部署到 Pages
+前端可以部署到任意静态托管服务。
+
+**Cloudflare Pages：**
+
+```bash
 npx wrangler pages deploy .
-
-# 或通过 Dashboard 手动上传 frontend/ 目录
 ```
 
-部署后首次访问同样会在浏览器中弹出配置框。
+**其他方式：** 将 `frontend/` 下所有文件（包括 `config.json`）上传到任意 HTTP 服务器或 CDN（Vercel、Netlify、GitHub Pages、S3 等）。
 
-### 方式三：任意静态托管
-
-将 `frontend/` 目录下所有文件上传到任意 HTTP 服务器或 CDN（如 Vercel、Netlify、GitHub Pages、S3 等）即可。
+> 注意：部署时必须包含 `config.json`，否则前端无法连接后端。
 
 ---
 
-## 配置说明
+## 本地开发
 
-**前端没有任何硬编码的 URL 或密钥。**
+```bash
+# 1. 创建配置文件
+cp config.json.example config.json
+# 编辑 config.json，填入你的 Worker URL
 
-后端地址通过浏览器弹出框输入后保存在 `localStorage` 中，键名为 `deniia_api_base`。
+# 2. 启动任意 HTTP 服务器
+npx http-server .
 
-### 重新配置
-
-- 登录页底部有 **Server Settings** 链接
-- 主界面顶部有 **Server** 链接
-- 随时点击可修改后端 URL
-
-### 手动设置（跳过弹出框）
-
-打开浏览器开发者工具 → Console，执行：
-
-```js
-localStorage.setItem('deniia_api_base', 'https://你的worker地址')
+# 3. 浏览器访问 http://localhost:8080
 ```
 
-然后刷新页面即可。
+> 必须通过 HTTP 服务器访问（`file://` 协议无法加载 `config.json`）。
 
 ---
 
@@ -97,31 +87,24 @@ localStorage.setItem('deniia_api_base', 'https://你的worker地址')
 
 ```
 frontend/
-├── index.html      # 主页面（Tailwind CSS 样式、所有 UI 结构）
-├── app.js          # 全部交互逻辑（API 调用、状态管理、视图切换）
-└── .gitignore      # 忽略缓存和配置文件
+├── index.html                  # 主页面（Tailwind CSS 样式、所有 UI 结构）
+├── app.js                      # 全部交互逻辑
+├── config.json.example         # 配置模板（公开仓库）
+├── config.json                 # 实际配置（已 gitignore，需手动创建）
+├── .gitignore
+└── README.md
 ```
-
-- 所有代码在单个 HTML + 单个 JS 中，无构建步骤
-- Tailwind CSS 通过 CDN 加载，无需安装
-- 无需 Node.js 即可运行
 
 ---
 
-## 本地开发说明
+## 配置说明
 
-```bash
-# 启动 HTTP 服务器
-npx http-server -p 8080
+所有 API 地址通过 `config.json` 中的 `api_base` 字段指定，格式为后端 Worker 的根 URL（不包含 `/api` 后缀）。
 
-# 打开 http://localhost:8080
-# 首次填写后端 Worker URL
+```json
+{
+  "api_base": "https://webmail-backend.xxxxx.workers.dev"
+}
 ```
 
-如需在开发时清除所有本地数据：
-
-```js
-localStorage.clear()
-```
-
-然后刷新页面即可重新配置。
+前端启动时会自动请求 `config.json` 获取后端地址。如果文件缺失或格式错误，页面会显示配置错误提示。
