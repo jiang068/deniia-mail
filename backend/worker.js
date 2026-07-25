@@ -307,7 +307,28 @@ async function handleUserRoutes(request, env, path, method, url, user) {
     }
 
     await env.DB.prepare('UPDATE messages SET is_read = 1 WHERE id = ?').bind(emailId).run();
-    return json({ email: msg });
+
+    // 在 Edge 端使用 PostalMime 自动将 raw_content 解码为 HTML 和 Plain Text
+    let htmlContent = null;
+    let textContent = null;
+
+    if (msg.raw_content) {
+      try {
+        const parsed = await PostalMime.parse(msg.raw_content);
+        htmlContent = parsed.html || null;
+        textContent = parsed.text || null;
+      } catch (e) {
+        console.error('[MIME Parse Failed]', e);
+      }
+    }
+
+    return json({
+      email: {
+        ...msg,
+        html: htmlContent || (textContent ? `<div style="white-space: pre-wrap;">${textContent}</div>` : msg.preview),
+        text: textContent || msg.preview
+      }
+    });
   }
 
   // DELETE /api/email/:id
@@ -496,7 +517,17 @@ async function handleUserRoutes(request, env, path, method, url, user) {
     if (!mb || !(await canAccessMailbox(env, user, mb.id))) {
       return json({ error: 'Forbidden' }, 403);
     }
-    return json({ sent });
+
+    const content = sent.text_content || '';
+    const isHtml = content.trim().startsWith('<');
+
+    return json({
+      sent: {
+        ...sent,
+        html: isHtml ? content : `<div style="white-space: pre-wrap; font-family: sans-serif;">${content}</div>`,
+        text: content
+      }
+    });
   }
 
   // DELETE /api/sent/:id
@@ -706,7 +737,9 @@ async function handleSend(request, user, env) {
       return json({ error: `Resend: ${data.message || data.error || res.statusText}` }, 400);
     }
 
-    // 记录发送
+      // 在 handleSend 函数中，修改写入数据库的代码部分：
+    const contentToSave = html || text || ''; // 优先取 html，如果为空则取 text
+
     await env.DB.prepare(
       'INSERT INTO sent_emails (user_id, resend_id, from_addr, to_addrs, subject, text_content, status, provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).bind(
@@ -715,7 +748,7 @@ async function handleSend(request, user, env) {
       fromAddr,
       Array.isArray(to) ? to.join(', ') : to,
       subject,
-      text || null,
+      contentToSave, // 使用兼容变量 contentToSave
       'sent',
       'resend'
     ).run();

@@ -301,11 +301,11 @@ async function init() {
     const res = await fetch('config.json');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const config = await res.json();
-    if (!config.api_base) throw new Error('api_base not set');
-    API = config.api_base.replace(/\/+$/, '') + '/api';
+    if (!config.baseUrl) throw new Error('baseUrl not set');
+    API = config.baseUrl.replace(/\/+$/, '') + '/api';
   } catch (e) {
     document.getElementById('config-error-msg').textContent =
-      'Failed to load config.json. Make sure it exists with a valid "api_base" field.';
+      'Failed to load config.json. Make sure it exists with a valid "baseUrl" field.';
     document.getElementById('config-error').classList.remove('hidden');
     return;
   }

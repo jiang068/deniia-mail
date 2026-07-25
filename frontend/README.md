@@ -39,7 +39,8 @@ Deniia Mail 的网页前端，纯原生 HTML + JavaScript，无框架依赖。
 
 ```json
 {
-  "api_base": "https://webmail-backend.xxxxx.workers.dev"
+  "baseUrl": "https://webmail-backend.xxxxx.workers.dev",
+  "defaultDomain": "your-domain.com"
 }
 ```
 
@@ -99,11 +100,12 @@ frontend/
 
 ## 配置说明
 
-所有 API 地址通过 `config.json` 中的 `api_base` 字段指定，格式为后端 Worker 的根 URL（不包含 `/api` 后缀）。
+所有 API 地址通过 `config.json` 中的 `baseUrl` 字段指定，格式为后端 Worker 的根 URL（不包含 `/api` 后缀）。
 
 ```json
 {
-  "api_base": "https://webmail-backend.xxxxx.workers.dev"
+  "baseUrl": "https://webmail-backend.xxxxx.workers.dev",
+  "defaultDomain": "your-domain.com"
 }
 ```
 

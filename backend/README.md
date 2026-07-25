@@ -124,7 +124,7 @@ npx wrangler deploy
 
 | 配置项 | 方式 | 说明 |
 |--------|------|------|
-| `DOMAIN` | `wrangler.toml` `[vars]` | 邮箱域名，如 `deniia.com` |
+| `DOMAIN` | `wrangler.toml` `[vars]` | 邮箱域名，如 `your-domain.com` |
 | `database_id` | `wrangler.toml` `[[d1_databases]]` | D1 数据库 ID |
 | `RESEND_API_KEY` | `wrangler secret put` | Resend API Key（发件） |
 

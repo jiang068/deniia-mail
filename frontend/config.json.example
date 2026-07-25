@@ -1,3 +1,4 @@
 {
-  "api_base": "https://webmail-backend.xxxxx.workers.dev"
+  "baseUrl": "https://webmail-backend.xxxxx.workers.dev",
+  "defaultDomain": "your-domain.com"
 }
