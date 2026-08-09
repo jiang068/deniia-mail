@@ -1,0 +1,2 @@
+# SPA 历史模式回退：未匹配到静态资源的请求全部交给 index.html
+/* /index.html 200
