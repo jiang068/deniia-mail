@@ -15,7 +15,7 @@ const loading = ref(false);
 const showRegister = ref(route.query.register === '1');
 const errorMessage = ref('');
 const loginForm = ref({ username: '', password: '' });
-const registerForm = ref({ username: '', password: '' });
+const registerForm = ref({ username: '', password: '', invite: '' });
 const isFirstRun = ref(false);
 const checked = ref(false);
 
@@ -70,17 +70,22 @@ async function doLogin() {
 
 async function doRegister() {
   loading.value = true; errorMessage.value = '';
+  if (!registerForm.value.invite.trim()) {
+    errorMessage.value = '注册需要邀请码';
+    loading.value = false;
+    return;
+  }
   try {
     const res = await fetch(`${baseUrl.value}/api/register`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(registerForm.value)
+      body: JSON.stringify({ ...registerForm.value })
     });
     const data = await res.json().catch(() => ({}));
     if (data.ok) {
       showRegister.value = false;
       loginForm.value.username = registerForm.value.username;
-      registerForm.value = { username: '', password: '' };
-      errorMessage.value = '注册成功，请登录';
+      registerForm.value = { username: '', password: '', invite: '' };
+      errorMessage.value = '注册成功，请用刚填的昵称登录';
     } else throw new Error(data.error || '注册失败');
   } catch (err) { errorMessage.value = '注册失败: ' + err.message; }
   finally { loading.value = false; }
@@ -119,8 +124,8 @@ onMounted(boot);
 
       <form v-if="!showRegister" @submit.prevent="doLogin" class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-sub mb-1">用户名</label>
-          <input type="text" v-model="loginForm.username" required placeholder="请输入用户名" autocomplete="username"
+          <label class="block text-sm font-medium text-sub mb-1">昵称</label>
+          <input type="text" v-model="loginForm.username" required placeholder="请输入昵称" autocomplete="username"
             class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent focus:outline-none text-sm">
         </div>
         <div>
@@ -139,13 +144,19 @@ onMounted(boot);
           首次使用：注册的账号将作为系统管理员。
         </div>
         <div>
-          <label class="block text-sm font-medium text-sub mb-1">用户名</label>
-          <input type="text" v-model="registerForm.username" required placeholder="输入用户名"
+          <label class="block text-sm font-medium text-sub mb-1">昵称（登录账号）</label>
+          <input type="text" v-model="registerForm.username" required maxlength="32" placeholder="英文/数字/._-，最长32"
             class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
+          <p class="text-xs text-faint mt-1">仅允许英文字母、数字、._-，一个昵称即一个账户</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-sub mb-1">密码（至少 6 位）</label>
           <input type="password" v-model="registerForm.password" required minlength="6" placeholder="输入密码"
+            class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-sub mb-1">邀请码</label>
+          <input type="text" v-model="registerForm.invite" required placeholder="输入管理员发放的邀请码"
             class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
         </div>
         <button type="submit" :disabled="loading" class="w-full py-2.5 bg-accent hover-bg-accent-h text-accent-ink font-medium rounded-lg shadow transition">

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import {
   baseUrl, token, currentMailbox, isAuthenticated,
@@ -20,7 +20,8 @@ const emailDetailCache = new Map();
 const emailListCache = new Map();
 const LIST_CACHE_TTL = 10000;
 
-let statusPollTimer = null;
+const checkingStatus = ref(false);
+const viewMode = ref('rendered'); // rendered | html | raw
 
 const filteredEmails = computed(() => {
   if (!searchQuery.value) return emails.value;
@@ -88,11 +89,13 @@ async function selectEmail(mail) {
   finally { loadingDetail.value = false; await refreshIcons(); }
 }
 
-async function pollStatus() {
-  if (!isAuthenticated.value || !token.value) return;
-  const sentList = (emails.value || []).filter(e => e.delivery_status && e.delivery_status !== 'delivered');
-  if (sentList.length === 0) return;
+// 手动查询投递状态（仅在用户点击时调一次 Resend）
+async function queryStatus() {
+  if (!isAuthenticated.value || !token.value || checkingStatus.value) return;
+  checkingStatus.value = true;
   try {
+    const sentList = (emails.value || []).filter(e => e.delivery_status && e.delivery_status !== 'delivered');
+    if (sentList.length === 0) return;
     const res = await fetch(`${baseUrl.value}/api/emails/check-status`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
       body: JSON.stringify({ ids: sentList.map(e => e.id) })
@@ -106,9 +109,8 @@ async function pollStatus() {
       }
     }
   } catch (e) { /* silent */ }
+  finally { checkingStatus.value = false; }
 }
-function startPolling() { stopPolling(); statusPollTimer = setInterval(pollStatus, 15000); }
-function stopPolling() { if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; } }
 
 const statusMap = {
   'sending': ['发送中', 'text-warn bg-warn-soft'],
@@ -124,9 +126,7 @@ onMounted(async () => {
   await fetchMailboxes();
   await fetchQuota();
   await fetchEmails();
-  startPolling();
 });
-onUnmounted(stopPolling);
 
 let mailboxPrev = selectedMailbox.value;
 watch(() => selectedMailbox.value, async (nv) => {
@@ -145,6 +145,11 @@ watch(() => route.name, () => { fetchEmails(); });
           <input type="text" v-model="searchQuery" placeholder="搜索已发送..."
             class="w-full pl-9 pr-3 py-1.5 bg-surface2 text-main border border-line rounded-lg text-sm focus:ring-2 ring-accent focus:outline-none">
         </div>
+        <button @click="queryStatus" :disabled="checkingStatus"
+          class="mt-2 w-full py-1.5 bg-surface2 text-sub border border-line rounded-lg text-xs font-medium hover:bg-surface3 hover:text-accent transition flex items-center justify-center space-x-1.5">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          <span>{{ checkingStatus ? '查询中...' : '查询发送状态' }}</span>
+        </button>
       </div>
 
       <div class="flex-1 overflow-y-auto divide-y divide-line">
@@ -175,7 +180,15 @@ watch(() => route.name, () => { fetchEmails(); });
               class="px-2.5 py-1.5 bg-surface2 border border-line rounded-md text-xs font-medium text-sub hover:bg-surface3 flex items-center space-x-1">
               <i data-lucide="chevron-left" class="w-4 h-4"></i><span>返回</span>
             </button>
-            <h2 class="text-xl font-bold text-main">{{ selectedEmail.subject }}</h2>
+            <h2 class="text-xl font-bold text-main flex-1 min-w-0 truncate">{{ selectedEmail.subject }}</h2>
+            <div class="flex bg-surface2 p-1 rounded-lg text-xs shrink-0">
+              <button @click="viewMode='rendered'"
+                :class="['px-3 py-1 rounded-md font-medium', viewMode==='rendered' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">视图</button>
+              <button @click="viewMode='html'"
+                :class="['px-3 py-1 rounded-md font-medium', viewMode==='html' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">HTML</button>
+              <button @click="viewMode='raw'"
+                :class="['px-3 py-1 rounded-md font-medium', viewMode==='raw' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">源码</button>
+            </div>
           </div>
           <div class="space-y-1 text-xs text-sub">
             <p><span class="font-semibold text-main">收件人：</span> {{ selectedEmail.to_addrs }}</p>
@@ -188,7 +201,9 @@ watch(() => route.name, () => { fetchEmails(); });
         </div>
         <div class="flex-1 overflow-y-auto p-4 md:p-6">
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <div v-else class="mail-body" v-html="sentContent"></div>
+          <div v-else-if="viewMode==='rendered'" class="mail-body" v-html="sentContent"></div>
+          <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
+          <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.text_content || '无源码内容' }}</pre>
         </div>
       </template>
       <div v-else class="flex-1 flex items-center justify-center text-faint flex-col space-y-2">

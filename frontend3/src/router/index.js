@@ -27,6 +27,7 @@ const routes = [
             { path: 'compose', name: 'compose', component: () => import('../views/ComposeView.vue'), props: route => ({ to: route.query.to, subject: route.query.subject, forward: route.query.forward, from: route.query.from }) },
             { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
             { path: 'admin', name: 'admin', component: () => import('../views/AdminView.vue') },
+            { path: 'admin/mailboxes', name: 'adminMailboxes', component: () => import('../views/AdminMailboxesView.vue') },
         ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/inbox' },

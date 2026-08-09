@@ -174,7 +174,16 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
               (SELECT COUNT(*) FROM user_mailboxes WHERE user_id = u.id) AS mailbox_count
        FROM users u ORDER BY u.created_at ${sort === 'asc' ? 'ASC' : 'DESC'}`
     ).all();
-    return json({ users: rows.results });
+
+    // 为每个用户附加其全部邮箱地址（用于管理页展示所有已启用邮箱）
+    const users = [];
+    for (const r of (rows.results || [])) {
+      const mbs = await env.DB.prepare(
+        'SELECT m.address FROM user_mailboxes um JOIN mailboxes m ON m.id = um.mailbox_id WHERE um.user_id = ? ORDER BY m.created_at DESC'
+      ).bind(r.id).all();
+      users.push({ ...r, mailboxes: (mbs.results || []).map(m => m.address) });
+    }
+    return json({ users });
   }
 
   // POST /api/admin/users — 管理员创建用户
@@ -182,6 +191,9 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
     const body = await request.json();
     const username = String(body.username || '').trim().toLowerCase();
     if (!username) return json({ error: 'Username required' }, 400);
+    if (!isValidNickname(username)) {
+      return json({ error: '昵称只能包含英文字母、数字、._-（最长 32 位）' }, 400);
+    }
     if (!body.password || body.password.length < 6) {
       return json({ error: 'Password must be at least 6 characters' }, 400);
     }
@@ -297,6 +309,125 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
       'DELETE FROM user_mailboxes WHERE user_id = ? AND mailbox_id = ?'
     ).bind(userRow.id, mb.id).run();
     return json({ ok: true });
+  }
+
+  // ==================== 邀请码管理 ====================
+
+  // GET /api/admin/invites — 列出所有邀请码及使用情况
+  if (path === '/api/admin/invites' && method === 'GET') {
+    const rows = await env.DB.prepare(
+      'SELECT id, code, max_uses, used_count, created_by, created_at FROM invite_codes ORDER BY created_at DESC'
+    ).all();
+    return json({ invites: rows.results || [] });
+  }
+
+  // POST /api/admin/invites — 批量生成邀请码
+  if (path === '/api/admin/invites' && method === 'POST') {
+    const body = await request.json();
+    const count = Math.min(Math.max(parseInt(body.count, 10) || 1, 1), 100);
+    const uses = Math.min(Math.max(parseInt(body.uses, 10) || 1, 1), 1000);
+    const codes = [];
+    for (let i = 0; i < count; i++) {
+      const code = 'DM' + crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
+      await env.DB.prepare(
+        'INSERT OR IGNORE INTO invite_codes (code, max_uses, created_by) VALUES (?, ?, ?)'
+      ).bind(code, uses, user.id).run();
+      codes.push(code);
+    }
+    return json({ ok: true, codes }, 201);
+  }
+
+  // DELETE /api/admin/invites/:id — 吊销邀请码
+  const invDelete = path.match(/^\/api\/admin\/invites\/(\d+)$/);
+  if (invDelete && method === 'DELETE') {
+    const id = parseInt(invDelete[1], 10);
+    await env.DB.prepare('DELETE FROM invite_codes WHERE id = ?').bind(id).run();
+    return json({ ok: true });
+  }
+
+  // ==================== 邮箱 / 邮件全局查看 ====================
+
+  // GET /api/admin/mailboxes — 所有邮箱（含未分配/停用）及归属与邮件数
+  if (path === '/api/admin/mailboxes' && method === 'GET') {
+    const rows = await env.DB.prepare(
+      `SELECT m.id, m.address, m.local_part, m.domain, m.can_login, m.is_favorite, m.created_at,
+              (SELECT u.username FROM user_mailboxes um JOIN users u ON u.id = um.user_id WHERE um.mailbox_id = m.id LIMIT 1) AS owner,
+              (SELECT COUNT(*) FROM messages WHERE mailbox_id = m.id) AS msg_count
+       FROM mailboxes m ORDER BY m.created_at DESC`
+    ).all();
+    return json({ mailboxes: rows.results || [] });
+  }
+
+  // GET /api/admin/mailboxes/:id/emails — 指定邮箱的全部邮件（admin 可见未启用邮箱邮件）
+  const adminMbEmails = path.match(/^\/api\/admin\/mailboxes\/(\d+)\/emails$/);
+  if (adminMbEmails && method === 'GET') {
+    const mailboxId = parseInt(adminMbEmails[1], 10);
+    const rows = await env.DB.prepare(
+      `SELECT id, mailbox_id, sender, to_addrs, subject, preview, received_at, is_read
+       FROM messages WHERE mailbox_id = ?
+       ORDER BY received_at DESC LIMIT 100`
+    ).bind(mailboxId).all();
+    return json({ emails: rows.results || [] });
+  }
+
+  // GET /api/admin/email/:id — 管理员查看任意邮件详情（含未启用邮箱）
+  const adminEmail = path.match(/^\/api\/admin\/email\/(\d+)$/);
+  if (adminEmail && method === 'GET') {
+    const emailId = parseInt(adminEmail[1], 10);
+    const msg = await env.DB.prepare(
+      'SELECT m.*, mb.address AS mailbox_address FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?'
+    ).bind(emailId).first();
+    if (!msg) return json({ error: 'Not Found' }, 404);
+
+    let htmlContent = null;
+    let textContent = null;
+    if (msg.raw_content) {
+      try {
+        const parsed = await PostalMime.parse(msg.raw_content);
+        htmlContent = parsed.html || null;
+        textContent = parsed.text || null;
+      } catch (e) { /* ignore parse errors */ }
+    }
+    return json({
+      email: {
+        ...msg,
+        html: htmlContent || (textContent ? `<div style="white-space: pre-wrap;">${textContent}</div>` : msg.preview),
+        text: textContent || msg.preview
+      }
+    });
+  }
+
+  // GET /api/admin/sent — 管理员查看全部已发送邮件（所有用户）
+  if (path === '/api/admin/sent' && method === 'GET') {
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
+    const rows = await env.DB.prepare(
+      `SELECT se.id, se.from_addr, se.to_addrs, se.subject,
+              SUBSTR(se.text_content, 1, 200) AS preview, se.delivery_status, se.created_at,
+              u.username AS sender_user
+       FROM sent_emails se LEFT JOIN users u ON u.id = se.user_id
+       ORDER BY se.created_at DESC LIMIT ?`
+    ).bind(limit).all();
+    return json({ sent: rows.results || [] });
+  }
+
+  // GET /api/admin/sent/:id — 管理员查看任意已发送邮件详情
+  const adminSentDetail = path.match(/^\/api\/admin\/sent\/(\d+)$/);
+  if (adminSentDetail && method === 'GET') {
+    const sentId = parseInt(adminSentDetail[1], 10);
+    const sent = await env.DB.prepare(
+      `SELECT se.*, u.username AS sender_user FROM sent_emails se LEFT JOIN users u ON u.id = se.user_id WHERE se.id = ?`
+    ).bind(sentId).first();
+    if (!sent) return json({ error: 'Not Found' }, 404);
+
+    const content = sent.text_content || '';
+    const isHtml = content.trim().startsWith('<');
+    return json({
+      sent: {
+        ...sent,
+        html: isHtml ? content : `<div style="white-space: pre-wrap; font-family: sans-serif;">${content}</div>`,
+        text: content
+      }
+    });
   }
 
   return json({ error: 'Not Found' }, 404);
@@ -737,11 +868,28 @@ async function handleRegister(request, env) {
     return json({ error: 'Registration is closed' }, 403);
   }
 
-  const { username, password } = await request.json();
+  const { username, password, invite } = await request.json();
   if (!username || !password) return json({ error: 'Username and password required' }, 400);
   if (password.length < 6) return json({ error: 'Password must be at least 6 characters' }, 400);
 
   const cleanUser = username.toLowerCase().trim();
+  // 昵称即账号：仅标准英文/数字/._-，最长 32
+  if (!isValidNickname(cleanUser)) {
+    return json({ error: '昵称只能包含英文字母、数字、._-（最长 32 位）' }, 400);
+  }
+
+  // 凭邀请码注册：无码或码无效/用尽一律拒绝
+  const invCode = String(invite || '').trim().toUpperCase();
+  if (!invCode) {
+    return json({ error: '注册需要邀请码' }, 400);
+  }
+  const inviteRow = await env.DB.prepare(
+    'SELECT id, max_uses, used_count FROM invite_codes WHERE code = ?'
+  ).bind(invCode).first();
+  if (!inviteRow || inviteRow.used_count >= inviteRow.max_uses) {
+    return json({ error: '邀请码无效或已被使用完' }, 403);
+  }
+
   const emailAddress = `${cleanUser}@${env.DOMAIN}`.toLowerCase();
   const passwordHash = await hashPassword(password);
 
@@ -749,6 +897,11 @@ async function handleRegister(request, env) {
     const result = await env.DB.prepare(
       'INSERT INTO users (username, password_hash, email_address, role, can_send, mailbox_limit) VALUES (?, ?, ?, ?, 1, 10)'
     ).bind(cleanUser, passwordHash, emailAddress, 'user').run();
+
+    // 创建成功后消费一个邀请码名额
+    await env.DB.prepare(
+      'UPDATE invite_codes SET used_count = used_count + 1 WHERE id = ?'
+    ).bind(inviteRow.id).run();
 
     const userId = result.meta.last_row_id;
 
@@ -1009,12 +1162,19 @@ async function verifyPassword(password, storedHash) {
     const hash = await sha256(password);
     return hash === storedHash;
   }
-  // 新格式：scrypt:iterations:salt:hash （iterations 用于长度恒定比较）
+  // 新格式：pbkdf:iterations:salt:hash
   const parts = storedHash.split(':');
   if (parts.length < 3) return false;
-  const iterations = parseInt(parts[0], 10);
-  const salt = parts[1];
-  const expected = parts[2];
+  let iterations, salt, expected;
+  if (parts[0] === 'pbkdf' && parts.length >= 4) {
+    iterations = parseInt(parts[1], 10);
+    salt = parts[2];
+    expected = parts[3];
+  } else {
+    iterations = parseInt(parts[0], 10);
+    salt = parts[1];
+    expected = parts[2];
+  }
   const derived = await deriveKey(password, salt, iterations);
   return derived === expected;
 }
@@ -1033,6 +1193,12 @@ function hashPassword(password) {
   const salt = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
   const iterations = 10000;
   return deriveKey(password, salt, iterations).then(hash => `pbkdf:${iterations}:${salt}:${hash}`);
+}
+
+// 昵称（即登录账号）：仅标准英文、数字、点/下划线/连字符，最长 32。
+const NICKNAME_RE = /^[a-zA-Z0-9._-]{1,32}$/;
+function isValidNickname(name) {
+  return NICKNAME_RE.test(name);
 }
 
 function json(data, status = 200) {

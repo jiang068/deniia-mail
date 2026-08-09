@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS sent_emails (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS invite_codes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    code         TEXT NOT NULL UNIQUE,
+    max_uses     INTEGER NOT NULL DEFAULT 1,
+    used_count   INTEGER NOT NULL DEFAULT 0,
+    created_by   INTEGER,
+    created_at   TEXT    DEFAULT (datetime('now'))
+);
+
 INSERT OR IGNORE INTO settings (key, value) VALUES ('allow_registration', 'false');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_send_limit', '50');
 
@@ -92,3 +101,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_user_date ON sent_emails(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_from ON sent_emails(from_addr);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_resend ON sent_emails(resend_id);
+CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);

@@ -55,6 +55,12 @@ function doLogout() {
           <i data-lucide="shield" class="w-4 h-4"></i><span>管理后台</span>
         </RouterLink>
 
+        <RouterLink to="/settings" @click="closeDrawer()"
+          :class="['w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-lg',
+            route.name === 'settings' ? 'bg-accent-soft text-accent font-medium' : 'text-sub hover:bg-surface3']">
+          <i data-lucide="palette" class="w-4 h-4"></i><span>设置</span>
+        </RouterLink>
+
         <div>
           <div class="flex items-center justify-between px-2 mb-1">
             <span class="text-xs text-faint font-medium">我的邮箱</span>

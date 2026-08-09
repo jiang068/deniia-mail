@@ -1,9 +1,9 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import {
   baseUrl, currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, quota, fetchMailboxes, fetchQuota,
-  switchMailbox, refreshIcons, clearAuth, token,
+  switchMailbox, refreshIcons, clearAuth, token, protectContent,
 } from '../stores/mail.js';
 import { useRouter } from 'vue-router';
 import { isMobile } from '../composables/mobileShell.js';
@@ -23,6 +23,19 @@ const notice = ref('');
 const editMode = ref('new'); // new | forward
 const composerEditMode = ref('text');
 const composerForm = ref({ to: '', subject: '', body: '', html: '' });
+
+// 纯文本正文 HTML 转义，用于「预览」模式安全展示
+function escapeHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 预览：与当前源码/正文保持实时同步（DOMPurify 清洗后渲染）
+const composerPreview = computed(() => {
+  if (composerForm.value.html) {
+    return protectContent(composerForm.value.html);
+  }
+  return `<div style="white-space: pre-wrap; font-family: sans-serif;">${escapeHtml(composerForm.value.body)}</div>`;
+});
 
 // 根据 props（来自路由 query）预填 reply / forward
 async function applyQueryHints() {
@@ -138,6 +151,8 @@ onMounted(boot);
             :class="['px-2.5 py-1 rounded', composerEditMode==='text' ? 'bg-accent text-accent-ink' : 'bg-surface2 text-sub border border-line']">纯文本</button>
           <button @click="composerEditMode='html'"
             :class="['px-2.5 py-1 rounded', composerEditMode==='html' ? 'bg-accent text-accent-ink' : 'bg-surface2 text-sub border border-line']">HTML</button>
+          <button @click="composerEditMode='preview'"
+            :class="['px-2.5 py-1 rounded', composerEditMode==='preview' ? 'bg-accent text-accent-ink' : 'bg-surface2 text-sub border border-line']">预览</button>
         </div>
       </div>
 
@@ -145,9 +160,10 @@ onMounted(boot);
         <textarea v-if="composerEditMode==='text'" v-model="composerForm.body"
           placeholder="编写邮件内容..."
           class="w-full flex-1 p-3 bg-surface2 text-main border border-line rounded-lg text-sm resize-none focus:ring-2 ring-accent"></textarea>
-        <textarea v-else v-model="composerForm.html"
+        <textarea v-else-if="composerEditMode==='html'" v-model="composerForm.html"
           placeholder="<html><body>HTML 源码...</body></html>"
           class="w-full flex-1 p-3 bg-surface2 text-main border border-line rounded-lg text-xs font-mono resize-none focus:ring-2 ring-accent"></textarea>
+        <div v-else class="w-full flex-1 overflow-y-auto p-3 mail-body-bg mail-body border border-line rounded-lg" v-html="composerPreview"></div>
       </div>
     </div>
 

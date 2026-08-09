@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import {
   baseUrl, token, currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, fetchMailboxes,
@@ -21,8 +21,6 @@ const viewMode = ref('rendered');
 const emailDetailCache = new Map();
 const emailListCache = new Map();
 const LIST_CACHE_TTL = 15000;
-
-let statusPollTimer = null;
 
 const hasExternalImages = computed(() => hasExternalImagesOf(selectedEmail.value?.html || ''));
 const hasAdvancedTrackers = computed(() => hasAdvancedTrackersOf(selectedEmail.value?.html || ''));
@@ -119,29 +117,11 @@ async function deleteEmail(id) {
 
 function setLevel(l) { remoteContentLevel.value = l; refreshIcons(); }
 
-// 状态轮询
-async function pollDeliveryStatus() {
-  if (!isAuthenticated.value || !token.value) return;
-  const sentList = (emails.value || []).filter(e => e.delivery_status && e.delivery_status !== 'delivered');
-  if (sentList.length === 0) return;
-  try {
-    const res = await fetch(`${baseUrl.value}/api/emails/check-status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
-      body: JSON.stringify({ ids: sentList.map(e => e.id) })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.results) {
-        const up = {};
-        for (const r of data.results) up[r.id] = r.delivery_status;
-        emails.value = emails.value.map(e => ({ ...e, delivery_status: up[e.id] || e.delivery_status }));
-      }
-    }
-  } catch (e) { /* silent */ }
-}
-function startStatusPolling() { stopStatusPolling(); statusPollTimer = setInterval(pollDeliveryStatus, 15000); }
-function stopStatusPolling() { if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; } }
+// 挂载：拉取列表
+onMounted(async () => {
+  await fetchMailboxes();
+  await fetchEmails();
+});
 
 const statusMap = {
   'sending': ['发送中', 'text-warn bg-warn-soft'],
@@ -155,14 +135,6 @@ function statusCls(s, detail = false) {
   const m = statusMap[s] || [s || '', 'text-sub bg-surface2'];
   return { t: m[0], c: m[1] };
 }
-
-// 挂载：拉取列表并启动轮询；离开时清理
-onMounted(async () => {
-  await fetchMailboxes();
-  await fetchEmails();
-  startStatusPolling();
-});
-onUnmounted(stopStatusPolling);
 
 // 切换邮箱（侧栏操作）时刷新当前列表
 let mailboxPrev = selectedMailbox.value;
