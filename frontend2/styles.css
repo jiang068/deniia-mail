@@ -1,23 +1,156 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* ============================================================
+   Deniia Mail — 全局样式 + 主题系统
+   主题由 <html data-theme="light|dark"> 决定。
+   强调色（accent）由 JS 在 <html> 上注入 style="--c-accent: ..." 覆盖。
+   所有页面布局均使用下方语义类，便于日夜主题 + 主题色一键切换。
+   ============================================================ */
 
+/* 不在此处 @import 远程字体：会阻塞 CSS 渲染（用户网络连不上 Google Fonts 时每页都卡顿）。
+   改用系统字体栈（见 body）。如确需自定义字体，请用 <link rel="preload" as="style"> 异步加载。 */
+
+/* ---------- 语义色板：日间（默认 少女粉） ---------- */
+:root,
+:root[data-theme="light"] {
+    --c-app:         #fdf2f8;   /* 页面底色，淡粉 */
+    --c-surface:     #ffffff;   /* 面板 / 卡片 */
+    --c-surface2:    #fdf2f8;   /* 输入框 / 次级面 */
+    --c-surface3:    #fce7f3;   /* hover / 当前项 */
+    --c-border:      #f5d0e4;
+
+    --c-text:        #3f2436;   /* 主文字，深紫褐 */
+    --c-text-sub:    #7a5a6e;   /* 次级文字 */
+    --c-text-faint:  #b48ba1;   /* 弱文字 / 占位 */
+
+    --c-accent:      #ec4899;   /* 少女粉（默认，可被用户更改） */
+    --c-accent-hover:#db2777;
+    --c-accent-soft: #fce7f3;
+    --c-accent-ink:  #ffffff;
+
+    --c-danger:      #e11d48;
+    --c-danger-soft: #ffe4e6;
+    --c-warn:        #d97706;
+    --c-warn-soft:   #fef3c7;
+    --c-green:       #16a34a;
+    --c-green-soft:  #dcfce7;
+    --c-blue:        #2563eb;
+    --c-blue-soft:   #dbeafe;
+
+    --shadow-panel:  0 10px 30px -12px rgba(219, 39, 119, 0.25);
+    --mail-body-bg:  #ffffff;
+}
+
+/* ---------- 深夜（默认 神秘紫） ---------- */
+:root[data-theme="dark"] {
+    --c-app:         #171325;   /* 深紫黑页底 */
+    --c-surface:     #221a36;   /* 面板 */
+    --c-surface2:    #1c152e;   /* 输入框 / 次级面 */
+    --c-surface3:    #2c2145;   /* hover / 当前项 */
+    --c-border:      #3a2f55;
+
+    --c-text:        #ede9fe;   /* 淡紫白文字 */
+    --c-text-sub:    #b6a7d6;
+    --c-text-faint:  #7d6ba3;
+
+    --c-accent:      #8b5cf6;   /* 神秘紫（默认，可被用户更改） */
+    --c-accent-hover:#7c3aed;
+    --c-accent-soft: #2f2650;
+    --c-accent-ink:  #ffffff;
+
+    --c-danger:      #fb7185;
+    --c-danger-soft: #47203a;
+    --c-warn:        #fbbf24;
+    --c-warn-soft:   #3d2f14;
+    --c-green:       #4ade80;
+    --c-green-soft:  #173b26;
+    --c-blue:        #60a5fa;
+    --c-blue-soft:   #1d3356;
+
+    --shadow-panel:  0 10px 30px -10px rgba(0, 0, 0, 0.6);
+    --mail-body-bg:  #241b38;
+}
+
+/* ---------- 语义工具类 ---------- */
+.bg-app        { background-color: var(--c-app); }
+.bg-surface    { background-color: var(--c-surface); }
+.bg-surface2   { background-color: var(--c-surface2); }
+.bg-surface3   { background-color: var(--c-surface3); }
+.border-line   { border-color: var(--c-border); }
+
+.text-main     { color: var(--c-text); }
+.text-sub      { color: var(--c-text-sub); }
+.text-faint    { color: var(--c-text-faint); }
+
+.text-accent   { color: var(--c-accent); }
+.bg-accent     { background-color: var(--c-accent); }
+.bg-accent-soft{ background-color: var(--c-accent-soft); }
+.border-accent { border-color: var(--c-accent); }
+.ring-accent   { --tw-ring-color: var(--c-accent); }
+.hover-bg-accent:hover { background-color: var(--c-accent); }
+.hover-bg-accent-h:hover { background-color: var(--c-accent-hover); }
+.hover-bg-accent-soft:hover { background-color: var(--c-accent-soft); }
+
+.text-danger      { color: var(--c-danger); }
+.bg-danger        { background-color: var(--c-danger); }
+.bg-danger-soft   { background-color: var(--c-danger-soft); }
+.border-danger-soft { border-color: color-mix(in srgb, var(--c-danger) 40%, transparent); }
+.border-green-soft  { border-color: color-mix(in srgb, var(--c-green) 40%, transparent); }
+.bg-warn          { background-color: var(--c-warn); }
+.bg-warn-soft     { background-color: var(--c-warn-soft); }
+.text-warn        { color: var(--c-warn); }
+.text-green       { color: var(--c-green); }
+.bg-green-soft    { background-color: var(--c-green-soft); }
+.text-blue        { color: var(--c-blue); }
+.bg-blue-soft     { background-color: var(--c-blue-soft); }
+
+.shadow-panel { box-shadow: var(--shadow-panel); }
+.mail-body-bg { background-color: var(--mail-body-bg); }
+
+/* 侧栏固定配色（不随主题走太多，仍用语义变量） */
+.sidebar { background-color: var(--c-app); border-right: 1px solid var(--c-border); }
+
+/* ---------- 基础 ---------- */
+html, body { height: 100%; }
 body {
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    background-color: var(--c-app);
+    color: var(--c-text);
+    -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+/* 主题切换过渡 */
+html.theme-transition *, html.theme-transition *::before, html.theme-transition *::after {
+    transition: background-color .25s ease, color .15s ease, border-color .25s ease !important;
 }
 
-::-webkit-scrollbar-track {
-    background: transparent;
+/* 邮件正文区：保证日夜间可读，且尽量贴近邮件原始展示 */
+.mail-body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--c-text);
+    word-break: break-word;
 }
+.mail-body img { max-width: 100%; height: auto; }
+.mail-body pre { white-space: pre-wrap; }
 
-::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 4px;
-}
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--c-text-faint); }
 
-::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+/* PJAX 切换淡入 */
+#app { transition: opacity .18s ease; }
+body.pjax-swap #app { opacity: 0; }
+
+/* 颜色选择器 swatch */
+.color-swatch {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform .12s ease, border-color .12s ease;
 }
+.color-swatch:hover { transform: scale(1.1); }
+.color-swatch.active { border-color: var(--c-text); transform: scale(1.12); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+
+input, textarea, select, button { font-family: inherit; }

@@ -1,0 +1,11 @@
+{
+  "name": "deniia-mail-frontend",
+  "private": true,
+  "description": "Deniia Mail 前端（Cloudflare Pages 静态站）。仅用于构建静态 Tailwind CSS。",
+  "scripts": {
+    "build:css": "tailwindcss -i tailwind.input.css -o tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

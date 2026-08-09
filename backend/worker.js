@@ -1076,6 +1076,9 @@ function cors(response) {
   headers.set('Access-Control-Allow-Origin', currentAllowedOrigin);
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // 预检缓存 24h：跨源 + Authorization 必触发 OPTIONS，缓存后浏览器不再对每个请求预检，
+  // 直接消灭日志里成堆的 204(几秒级延迟)。跨源配置时常变，留 24h 平衡灵活性与性能。
+  headers.set('Access-Control-Max-Age', '86400');
   if (currentAllowedOrigin !== '*') {
     headers.set('Vary', 'Origin');
     headers.set('Access-Control-Allow-Credentials', 'false');

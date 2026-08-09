@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 · Deniia Mail</title>
+    <script src="theme.boot.js"></script>
+    <!-- 禁用浏览器对站内链接的投机性预取/预渲染，避免请求未点击的页面 -->
+    <script type="speculationrules">{"prerender":[],"prefetch":[]}</script>
+    <!-- 静态 Tailwind CSS（已预编译，生产可用） -->
+    <link rel="stylesheet" href="tailwind.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0"></script>
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
+    <script src="js/debug.js"></script>
+</head>
+<body class="min-h-screen bg-app">
+    <div id="app" class="min-h-screen flex items-center justify-center bg-app px-4">
+
+        <!-- ===== 配置错误 ===== -->
+        <div v-if="configError" class="max-w-md w-full bg-surface rounded-xl shadow-panel p-6 text-center space-y-4 border border-line">
+            <div class="inline-flex p-3 bg-warn-soft text-warn rounded-full"><i data-lucide="alert-triangle" class="w-8 h-8"></i></div>
+            <h3 class="text-lg font-bold text-main">配置需要检查</h3>
+            <p class="text-sm text-sub">{{ configErrorMessage }}</p>
+            <div class="text-xs bg-surface2 p-3 rounded-lg font-mono text-left text-sub border border-line">
+                { "baseUrl": "https://mail-backend.your-domain.com", "defaultDomain": "your-domain.com" }
+            </div>
+            <button @click="recall" class="px-4 py-2 bg-accent text-accent-ink rounded-lg text-sm">重新检测</button>
+        </div>
+
+        <!-- ===== 登录 / 注册 ===== -->
+        <div v-else class="max-w-md w-full bg-surface rounded-xl shadow-panel p-8 space-y-6 border border-line">
+            <div class="text-center">
+                <div class="inline-flex p-3 bg-accent-soft text-accent rounded-full mb-3"><i data-lucide="mail" class="w-8 h-8"></i></div>
+                <h2 class="text-2xl font-bold text-main">{{ showRegister ? '注册' : '登录' }}</h2>
+                <p class="text-xs text-sub font-mono mt-1">{{ baseUrl }}</p>
+            </div>
+
+            <div v-if="errorMessage" class="bg-danger-soft border border-danger-soft text-danger text-sm rounded-lg px-4 py-2">{{ errorMessage }}</div>
+
+            <form v-if="!showRegister" @submit.prevent="doLogin" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-sub mb-1">用户名</label>
+                    <input type="text" v-model="loginForm.username" required placeholder="请输入用户名" autocomplete="username"
+                        class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent focus:outline-none text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-sub mb-1">密码</label>
+                    <input type="password" v-model="loginForm.password" required placeholder="请输入密码" autocomplete="current-password"
+                        class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent focus:outline-none text-sm">
+                </div>
+                <button type="submit" :disabled="loading"
+                    class="w-full py-2.5 bg-accent hover-bg-accent-h text-accent-ink font-medium rounded-lg shadow transition">
+                    {{ loading ? '处理中...' : '登录' }}
+                </button>
+            </form>
+
+            <form v-else @submit.prevent="doRegister" class="space-y-4">
+                <div v-if="isFirstRun" class="bg-accent-soft text-accent text-sm rounded-lg px-4 py-2">
+                    首次使用：注册的账号将作为系统管理员。
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-sub mb-1">用户名</label>
+                    <input type="text" v-model="registerForm.username" required placeholder="输入用户名"
+                        class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-sub mb-1">密码（至少 6 位）</label>
+                    <input type="password" v-model="registerForm.password" required minlength="6" placeholder="输入密码"
+                        class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
+                </div>
+                <button type="submit" :disabled="loading" class="w-full py-2.5 bg-accent hover-bg-accent-h text-accent-ink font-medium rounded-lg shadow transition">
+                    {{ loading ? '处理中...' : '注册' }}
+                </button>
+            </form>
+
+            <div class="text-center text-sm">
+                <button v-if="!showRegister" @click="showRegister = true; errorMessage=''" class="text-accent hover:underline">没有账号？点击注册</button>
+                <button v-else @click="showRegister = false; errorMessage=''" class="text-accent hover:underline">已有账号？点击登录</button>
+            </div>
+
+            <a href="index.html" class="block text-center text-xs text-faint hover:text-accent">← 返回首页</a>
+        </div>
+
+    </div>
+    <script type="module" src="js/login.js"></script>
+    <script type="module" src="js/pjax.js"></script>
+</body>
+</html>

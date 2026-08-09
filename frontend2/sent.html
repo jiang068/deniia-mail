@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>已发送 · Deniia Mail</title>
+    <script src="theme.boot.js"></script>
+    <!-- 禁用浏览器对站内链接的投机性预取/预渲染，避免请求未点击的页面 -->
+    <script type="speculationrules">{"prerender":[],"prefetch":[]}</script>
+    <!-- 静态 Tailwind CSS（已预编译，生产可用） -->
+    <link rel="stylesheet" href="tailwind.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0"></script>
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
+    <script src="js/debug.js"></script>
+</head>
+<body class="h-screen overflow-hidden">
+    <div id="app" class="h-full flex flex-col">
+
+        <!-- 主界面（登录态由 ensureAuth 校验，未登录自动跳转登录页） -->
+        <div class="flex-1 flex overflow-hidden bg-app">
+
+            <!-- 侧栏 -->
+            <aside class="w-64 flex flex-col justify-between p-4 flex-shrink-0 overflow-y-auto sidebar">
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between px-2">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
+                            <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
+                        </div>
+                        <a href="settings.html" title="设置" class="text-faint hover:text-accent"><i data-lucide="palette" class="w-5 h-5"></i></a>
+                    </div>
+
+                    <a :href="folder.page" v-for="folder in navFolders" :key="folder.id"
+                        :class="['flex items-center justify-between px-3 py-2 rounded-lg text-sm transition',
+                            folder.id === 'sent' ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
+                        <div class="flex items-center space-x-3"><i :data-lucide="folder.icon" class="w-4 h-4"></i><span>{{ folder.label }}</span></div>
+                    </a>
+
+                    <a v-if="isAdmin" href="admin.html"
+                        class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-warn hover:bg-surface3 rounded-lg">
+                        <i data-lucide="shield" class="w-4 h-4"></i><span>管理后台</span>
+                    </a>
+
+                    <div>
+                        <div class="flex items-center justify-between px-2 mb-1">
+                            <span class="text-xs text-faint font-medium">我的邮箱</span>
+                            <button @click="openMailboxDialog" title="新建邮箱" class="text-faint hover:text-accent"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>
+                        </div>
+                        <div class="space-y-0.5 max-h-40 overflow-y-auto">
+                            <div v-for="mb in mailboxes" :key="mb.id"
+                                @click="switchMailbox(mb.address)"
+                                :class="['px-3 py-1.5 rounded-lg cursor-pointer text-xs truncate transition', mb.address === selectedMailbox ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
+                                <span v-if="mb.has_unread" class="inline-block w-1.5 h-1.5 bg-accent rounded-full mr-1.5"></span>
+                                {{ mb.address }}
+                            </div>
+                            <div v-if="mailboxes.length === 0" class="text-xs text-faint px-3 py-1">暂无邮箱</div>
+                        </div>
+                        <div class="px-2 pt-1 text-xs text-faint">已用 {{ quota.used }} / {{ isAdmin ? '∞' : quota.limit }} 个</div>
+                    </div>
+
+                    <a href="compose.html"
+                        class="w-full py-2.5 px-4 bg-accent hover-bg-accent-h text-accent-ink rounded-lg flex items-center justify-center space-x-2 font-medium shadow transition">
+                        <i data-lucide="square-pen" class="w-4 h-4"></i><span>撰写邮件</span>
+                    </a>
+                </div>
+
+                <div class="border-t pt-4 space-y-2" :class="['border-line']">
+                    <div class="px-3 py-1 text-xs text-faint truncate">当前: <span class="text-accent font-mono">{{ currentMailbox || '未选择' }}</span></div>
+                    <button @click="doLogout" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-danger hover:bg-danger-soft rounded-lg">
+                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出登录</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- 已发送列表 -->
+            <div class="w-80 bg-surface border-r border-line flex flex-col flex-shrink-0">
+                <div class="p-4 border-b border-line">
+                    <div class="relative">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-faint"></i>
+                        <input type="text" v-model="searchQuery" placeholder="搜索已发送..."
+                            class="w-full pl-9 pr-3 py-1.5 bg-surface2 text-main border border-line rounded-lg text-sm focus:ring-2 ring-accent focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto divide-y divide-line">
+                    <div v-if="loadingEmails" class="p-8 text-center text-xs text-faint">加载中...</div>
+                    <div v-else-if="filteredEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无已发送邮件</div>
+                    <div v-for="mail in filteredEmails" :key="mail.id"
+                        @click="selectEmail(mail)"
+                        :class="['p-4 cursor-pointer hover:bg-surface3 transition', selectedEmail?.id === mail.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
+                        <div class="flex justify-between items-start mb-1">
+                            <span class="text-sm font-semibold truncate text-main">{{ mail.to_addrs }}</span>
+                            <span class="text-xs text-faint flex-shrink-0">{{ formatDate(mail.created_at) }}</span>
+                        </div>
+                        <h4 class="text-xs font-medium text-main truncate mb-1">{{ mail.subject || '(无主题)' }}</h4>
+                        <div class="flex items-center gap-2">
+                            <p class="text-xs text-sub line-clamp-2 flex-1 min-w-0">{{ mail.preview }}</p>
+                            <span :class="['text-xs font-medium shrink-0 px-1.5 py-0.5 rounded', statusCls(mail.delivery_status).c]">{{ statusCls(mail.delivery_status).t }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 详情 -->
+            <main class="flex-1 bg-surface flex flex-col overflow-hidden">
+                <template v-if="selectedEmail">
+                    <div class="p-6 border-b border-line">
+                        <h2 class="text-xl font-bold text-main mb-3">{{ selectedEmail.subject }}</h2>
+                        <div class="space-y-1 text-xs text-sub">
+                            <p><span class="font-semibold text-main">收件人：</span> {{ selectedEmail.to_addrs }}</p>
+                            <p><span class="font-semibold text-main">时间：</span> {{ selectedEmail.created_at }}</p>
+                            <p class="flex items-center gap-1.5">
+                                <span class="font-semibold text-main">状态：</span>
+                                <span :class="statusCls(selectedEmail.delivery_status).c">{{ statusCls(selectedEmail.delivery_status).t }}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
+                        <div v-else class="mail-body" v-html="sentContent"></div>
+                    </div>
+                </template>
+                <div v-else class="flex-1 flex items-center justify-center text-faint flex-col space-y-2">
+                    <i data-lucide="send" class="w-12 h-12 stroke-1"></i>
+                    <p class="text-sm">选择一封已发送邮件查看详情</p>
+                </div>
+            </main>
+        </div>
+
+        </div>
+    <script type="module" src="js/sent.js"></script>
+    <script type="module" src="js/pjax.js"></script>
+</body>
+</html>

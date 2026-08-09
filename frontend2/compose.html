@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>写邮件 · Deniia Mail</title>
+    <script src="theme.boot.js"></script>
+    <!-- 禁用浏览器对站内链接的投机性预取/预渲染，避免请求未点击的页面 -->
+    <script type="speculationrules">{"prerender":[],"prefetch":[]}</script>
+    <!-- 静态 Tailwind CSS（已预编译，生产可用） -->
+    <link rel="stylesheet" href="tailwind.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0"></script>
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
+    <script src="js/debug.js"></script>
+</head>
+<body class="h-screen overflow-hidden">
+    <div id="app" class="h-full flex flex-col">
+
+        <!-- 编辑器（登录态由 ensureAuth 校验，未登录自动跳转登录页） -->
+        <div class="flex-1 flex overflow-hidden bg-app">
+
+            <!-- 侧栏 -->
+            <aside class="w-64 flex flex-col justify-between p-4 flex-shrink-0 overflow-y-auto sidebar">
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between px-2">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
+                            <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
+                        </div>
+                        <a href="settings.html" title="设置" class="text-faint hover:text-accent"><i data-lucide="palette" class="w-5 h-5"></i></a>
+                    </div>
+
+                    <a :href="folder.page" v-for="folder in navFolders" :key="folder.id"
+                        :class="['flex items-center justify-between px-3 py-2 rounded-lg text-sm transition', 'hover:bg-surface3 text-sub']">
+                        <div class="flex items-center space-x-3"><i :data-lucide="folder.icon" class="w-4 h-4"></i><span>{{ folder.label }}</span></div>
+                    </a>
+
+                    <a v-if="isAdmin" href="admin.html"
+                        class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-warn hover:bg-surface3 rounded-lg">
+                        <i data-lucide="shield" class="w-4 h-4"></i><span>管理后台</span>
+                    </a>
+
+                    <div>
+                        <div class="flex items-center justify-between px-2 mb-1">
+                            <span class="text-xs text-faint font-medium">我的邮箱</span>
+                            <button @click="openMailboxDialog" title="新建邮箱" class="text-faint hover:text-accent"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>
+                        </div>
+                        <div class="space-y-0.5 max-h-40 overflow-y-auto">
+                            <div v-for="mb in mailboxes" :key="mb.id"
+                                @click="switchMailbox(mb.address)"
+                                :class="['px-3 py-1.5 rounded-lg cursor-pointer text-xs truncate transition', mb.address === selectedMailbox ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
+                                <span v-if="mb.has_unread" class="inline-block w-1.5 h-1.5 bg-accent rounded-full mr-1.5"></span>
+                                {{ mb.address }}
+                            </div>
+                            <div v-if="mailboxes.length === 0" class="text-xs text-faint px-3 py-1">暂无邮箱</div>
+                        </div>
+                        <div class="px-2 pt-1 text-xs text-faint">已用 {{ quota.used }} / {{ isAdmin ? '∞' : quota.limit }} 个</div>
+                    </div>
+
+                    <a href="compose.html"
+                        class="w-full py-2.5 px-4 bg-accent hover-bg-accent-h text-accent-ink rounded-lg flex items-center justify-center space-x-2 font-medium shadow transition">
+                        <i data-lucide="square-pen" class="w-4 h-4"></i><span>撰写邮件</span>
+                    </a>
+                </div>
+
+                <div class="border-t pt-4 space-y-2" :class="['border-line']">
+                    <div class="px-3 py-1 text-xs text-faint truncate">发件人: <span class="text-accent font-mono">{{ currentMailbox || '未选择' }}</span></div>
+                    <button @click="doLogout" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-danger hover:bg-danger-soft rounded-lg">
+                        <i data-lucide="log-out" class="w-4 h-4"></i><span>退出登录</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- 编辑区 -->
+            <main class="flex-1 bg-surface flex flex-col overflow-hidden">
+                <div class="p-4 border-b border-line flex justify-between items-center">
+                    <h3 class="font-bold text-main flex items-center space-x-2">
+                        <i data-lucide="square-pen" class="w-5 h-5 text-accent"></i>
+                        <span>{{ editMode === 'forward' ? '转发邮件' : '撰写新邮件' }}</span>
+                    </h3>
+                    <a href="inbox.html" class="px-4 py-2 bg-surface2 border border-line rounded-lg text-sm font-medium text-sub hover:bg-surface3">返回收件箱</a>
+                </div>
+
+                <div v-if="errorMessage" class="mx-6 mt-4 bg-danger-soft border border-danger-soft text-danger text-sm rounded-lg px-4 py-2">{{ errorMessage }}</div>
+                <div v-if="notice" class="mx-6 mt-4 bg-green-soft border border-green-soft text-green text-sm rounded-lg px-4 py-2">{{ notice }}</div>
+
+                <div class="p-6 flex-1 flex flex-col space-y-4 overflow-y-auto">
+                    <div class="grid grid-cols-1 gap-3 text-sm">
+                        <div>
+                            <label class="block text-xs font-medium text-sub mb-1">收件人 (To)</label>
+                            <input type="email" v-model="composerForm.to" placeholder="收件人"
+                                class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-sub mb-1">主题</label>
+                            <input type="text" v-model="composerForm.subject" placeholder="主题"
+                                class="w-full px-3 py-2 bg-surface2 text-main border border-line rounded-lg focus:ring-2 ring-accent text-sm font-medium">
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-1 border-t border-line">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs text-faint font-medium">发件人：</span>
+                            <select v-model="selectedMailbox" class="bg-surface2 text-main border border-line rounded-lg px-2 py-1 text-xs focus:ring-2 ring-accent">
+                                <option v-for="mb in mailboxes" :key="mb.id" :value="mb.address">{{ mb.address }}</option>
+                            </select>
+                        </div>
+                        <div class="flex space-x-2 text-xs">
+                            <button @click="composerEditMode='text'"
+                                :class="['px-2.5 py-1 rounded', composerEditMode==='text' ? 'bg-accent text-accent-ink' : 'bg-surface2 text-sub border border-line']">纯文本</button>
+                            <button @click="composerEditMode='html'"
+                                :class="['px-2.5 py-1 rounded', composerEditMode==='html' ? 'bg-accent text-accent-ink' : 'bg-surface2 text-sub border border-line']">HTML</button>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 flex flex-col">
+                        <textarea v-if="composerEditMode==='text'" v-model="composerForm.body"
+                            placeholder="编写邮件内容..."
+                            class="w-full flex-1 p-3 bg-surface2 text-main border border-line rounded-lg text-sm resize-none focus:ring-2 ring-accent"></textarea>
+                        <textarea v-else v-model="composerForm.html"
+                            placeholder="<html><body>HTML 源码...</body></html>"
+                            class="w-full flex-1 p-3 bg-surface2 text-main border border-line rounded-lg text-xs font-mono resize-none focus:ring-2 ring-accent"></textarea>
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 border-t border-line flex justify-between items-center">
+                    <span class="text-xs text-faint">发送后将可在「已发送」中查看状态</span>
+                    <div class="flex space-x-3">
+                        <a href="inbox.html" class="px-4 py-2 border border-line rounded-lg text-sm font-medium text-sub hover:bg-surface3">取消</a>
+                        <button @click="sendEmail" :disabled="sending"
+                            class="px-5 py-2 bg-accent hover-bg-accent-h text-accent-ink rounded-lg text-sm font-medium shadow flex items-center space-x-1">
+                            <i data-lucide="send" class="w-4 h-4"></i>
+                            <span>{{ sending ? '发送中...' : '发送' }}</span>
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <script type="module" src="js/compose.js"></script>
+    <script type="module" src="js/pjax.js"></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 · Deniia Mail</title>
+    <script src="theme.boot.js"></script>
+    <!-- 禁用浏览器对站内链接的投机性预取/预渲染，避免请求未点击的页面 -->
+    <script type="speculationrules">{"prerender":[],"prefetch":[]}</script>
+    <!-- 静态 Tailwind CSS（已预编译，生产可用） -->
+    <link rel="stylesheet" href="tailwind.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0"></script>
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
+    <script src="js/debug.js"></script>
+</head>
+<body class="min-h-screen bg-app">
+    <div id="app" class="min-h-screen flex">
+
+        <!-- 侧栏 -->
+        <aside class="w-64 p-4 flex-shrink-0 overflow-y-auto sidebar hidden md:flex flex-col justify-between min-h-screen">
+            <div class="space-y-4">
+                <div class="flex items-center space-x-2 px-2">
+                    <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
+                    <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
+                </div>
+                <a :href="folder.page" v-for="folder in navFolders" :key="folder.id"
+                    class="flex items-center px-3 py-2 rounded-lg text-sm hover:bg-surface3 text-sub">
+                    <i :data-lucide="folder.icon" class="w-4 h-4 mr-3"></i><span>{{ folder.label }}</span>
+                </a>
+                <a href="settings.html"
+                    class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-sub hover:bg-surface3 rounded-lg">
+                    <i data-lucide="palette" class="w-4 h-4"></i><span>设置</span>
+                </a>
+                <a href="compose.html"
+                    class="w-full py-2.5 px-4 bg-accent hover-bg-accent-h text-accent-ink rounded-lg flex items-center justify-center space-x-2 font-medium shadow transition">
+                    <i data-lucide="square-pen" class="w-4 h-4"></i><span>撰写邮件</span>
+                </a>
+            </div>
+            <div class="border-t border-line pt-4 space-y-2">
+                <div class="px-3 py-1 text-xs text-faint truncate">当前: <span class="text-accent font-mono">{{ currentMailbox || '未选择' }}</span></div>
+                <a href="login.html" class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-danger hover:bg-danger-soft rounded-lg">
+                    <i data-lucide="log-out" class="w-4 h-4"></i><span>退出登录</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- 管理主体 -->
+        <main class="flex-1 p-6 md:p-10 overflow-y-auto">
+            <div class="max-w-4xl mx-auto">
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-xl font-bold text-main flex items-center space-x-2">
+                        <i data-lucide="shield" class="w-6 h-6 text-warn"></i>
+                        <span>管理后台</span>
+                    </h1>
+                    <div class="flex gap-3">
+                        <a href="settings.html" class="text-sm text-accent hover:underline">设置</a>
+                        <a href="inbox.html" class="text-sm text-accent hover:underline">← 返回收件箱</a>
+                    </div>
+                </div>
+
+                <div v-if="!ready" class="text-faint text-sm">加载中...</div>
+
+                <div v-else-if="!isAdmin" class="bg-surface shadow-panel border border-line rounded-xl p-10 text-center">
+                    <i data-lucide="shield-x" class="w-10 h-10 text-faint mx-auto mb-3"></i>
+                    <p class="text-sub">您没有管理员权限。</p>
+                    <a href="inbox.html" class="inline-block mt-4 px-4 py-2 bg-accent text-accent-ink rounded-lg text-sm">返回收件箱</a>
+                </div>
+
+                <div v-else>
+                    <div v-if="errorMessage" class="bg-danger-soft border border-danger-soft text-danger text-sm rounded-lg px-4 py-2 mb-4">{{ errorMessage }}</div>
+
+                    <!-- 系统设置 -->
+                    <div class="bg-surface shadow-panel border border-line rounded-xl p-6 mb-6">
+                        <h2 class="font-semibold text-main mb-4 flex items-center gap-2"><i data-lucide="settings" class="w-4 h-4 text-accent"></i>系统设置</h2>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm font-medium text-main">开放注册</p>
+                                    <p class="text-xs text-sub">关闭后新用户无法自行注册</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" class="sr-only peer"
+                                        :checked="adminSettings.allow_registration === 'true'"
+                                        @change="toggleRegistration">
+                                    <div class="w-9 h-5 rounded-full transition peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"
+                                         style="background-color: var(--c-accent-soft);" :class="[adminSettings.allow_registration==='true' ? '' : 'opacity-50']"
+                                         :style="{ backgroundColor: adminSettings.allow_registration==='true' ? 'var(--c-accent)' : 'var(--c-border)' }"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm font-medium text-main">每日发件限额</p>
+                                    <p class="text-xs text-sub">每位用户每天最多发送邮件数</p>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <input type="number" v-model.number="adminSettings.daily_send_limit" min="1" max="10000"
+                                        class="w-20 bg-surface2 text-main border border-line rounded-lg px-2 py-1 text-sm text-center">
+                                    <button @click="updateSendLimit" class="px-3 py-1 bg-accent text-accent-ink rounded-lg text-sm">保存</button>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm font-medium text-main">默认邮箱限额</p>
+                                    <p class="text-xs text-sub">普通用户最多可创建的邮箱数（管理员不限）</p>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <input type="number" v-model.number="adminSettings.default_mailbox_limit" min="1" max="100"
+                                        class="w-20 bg-surface2 text-main border border-line rounded-lg px-2 py-1 text-sm text-center">
+                                    <button @click="updateDefaultMailboxLimit" class="px-3 py-1 bg-accent text-accent-ink rounded-lg text-sm">保存</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 用户列表 -->
+                    <div class="bg-surface shadow-panel border border-line rounded-xl p-6">
+                        <h2 class="font-semibold text-main mb-4 flex items-center gap-2"><i data-lucide="users" class="w-4 h-4 text-accent"></i>用户列表</h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead>
+                                    <tr class="border-b border-line text-xs text-faint">
+                                        <th class="p-2">用户名</th>
+                                        <th class="p-2">邮箱</th>
+                                        <th class="p-2">角色</th>
+                                        <th class="p-2">邮箱限额</th>
+                                        <th class="p-2">创建时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="u in adminUsers" :key="u.id" class="border-b border-line text-sm">
+                                        <td class="p-2 font-medium text-main">{{ u.username }}</td>
+                                        <td class="p-2 text-sub text-xs">{{ u.email_address }}</td>
+                                        <td class="p-2">
+                                            <span v-if="u.role === 'admin'" class="text-warn text-xs font-medium">Admin</span>
+                                            <span v-else class="text-faint text-xs">User</span>
+                                        </td>
+                                        <td class="p-2 text-xs text-sub">{{ u.role === 'admin' ? '不限' : (u.mailbox_limit || '—') }}</td>
+                                        <td class="p-2 text-xs text-faint">{{ u.created_at }}</td>
+                                    </tr>
+                                    <tr v-if="adminUsers.length === 0"><td colspan="5" class="p-4 text-center text-faint text-sm">暂无用户</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script type="module" src="js/admin.js"></script>
+    <script type="module" src="js/pjax.js"></script>
+</body>
+</html>
