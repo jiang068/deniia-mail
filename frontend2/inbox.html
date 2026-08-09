@@ -18,11 +18,18 @@
 <body class="h-screen overflow-hidden">
     <div id="app" class="h-full flex flex-col">
 
+        <!-- 移动端顶栏（仅手机显示）：汉堡 + 标题 + 设置 -->
+        <div v-if="isMobile" class="md:hidden flex items-center justify-between px-3 py-2 bg-surface border-b border-line shrink-0">
+            <button @click="toggleDrawer" class="p-1 text-main hover:text-accent" aria-label="菜单"><i data-lucide="menu" class="w-6 h-6"></i></button>
+            <span class="text-base font-bold text-main tracking-wide flex items-center space-x-1.5"><i data-lucide="mail-check" class="w-5 h-5 text-accent"></i>Deniia Mail</span>
+            <a href="settings.html" title="设置" class="p-1 text-faint hover:text-accent"><i data-lucide="palette" class="w-5 h-5"></i></a>
+        </div>
+
         <!-- 主界面（登录态由 ensureAuth 校验，未登录自动跳转登录页） -->
         <div class="flex-1 flex overflow-hidden bg-app">
 
-            <!-- 侧栏 -->
-            <aside class="w-64 flex flex-col justify-between p-4 flex-shrink-0 overflow-y-auto sidebar">
+            <!-- 侧栏（桌面常驻 / 移动端滑出抽屉） -->
+            <aside :class="mobileSidebarCls">
                 <div class="space-y-4">
                     <div class="flex items-center justify-between px-2">
                         <div class="flex items-center space-x-2">
@@ -32,13 +39,13 @@
                         <a href="settings.html" title="设置" class="text-faint hover:text-accent"><i data-lucide="palette" class="w-5 h-5"></i></a>
                     </div>
 
-                    <a :href="folder.page" v-for="folder in navFolders" :key="folder.id"
+                    <a :href="folder.page" v-for="folder in navFolders" :key="folder.id" @click="closeDrawer"
                         :class="['flex items-center justify-between px-3 py-2 rounded-lg text-sm transition',
                             folder.id === 'inbox' ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
                         <div class="flex items-center space-x-3"><i :data-lucide="folder.icon" class="w-4 h-4"></i><span>{{ folder.label }}</span></div>
                     </a>
 
-                    <a v-if="isAdmin" href="admin.html"
+                    <a v-if="isAdmin" href="admin.html" @click="closeDrawer"
                         class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-warn hover:bg-surface3 rounded-lg">
                         <i data-lucide="shield" class="w-4 h-4"></i><span>管理后台</span>
                     </a>
@@ -50,7 +57,7 @@
                         </div>
                         <div class="space-y-0.5 max-h-40 overflow-y-auto">
                             <div v-for="mb in mailboxes" :key="mb.id"
-                                @click="switchMailbox(mb.address)"
+                                @click="closeDrawer(); switchMailbox(mb.address)"
                                 :class="['px-3 py-1.5 rounded-lg cursor-pointer text-xs truncate transition', mb.address === selectedMailbox ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
                                 <span v-if="mb.has_unread" class="inline-block w-1.5 h-1.5 bg-accent rounded-full mr-1.5"></span>
                                 {{ mb.address }}
@@ -60,7 +67,7 @@
                         <div class="px-2 pt-1 text-xs text-faint">已用 {{ quota.used }} / {{ isAdmin ? '∞' : quota.limit }} 个</div>
                     </div>
 
-                    <a href="compose.html"
+                    <a href="compose.html" @click="closeDrawer"
                         class="w-full py-2.5 px-4 bg-accent hover-bg-accent-h text-accent-ink rounded-lg flex items-center justify-center space-x-2 font-medium shadow transition">
                         <i data-lucide="square-pen" class="w-4 h-4"></i><span>撰写邮件</span>
                     </a>
@@ -75,10 +82,10 @@
             </aside>
 
             <!-- 邮件列表 -->
-            <div class="w-80 bg-surface border-r border-line flex flex-col flex-shrink-0">
+            <div :class="listColumnCls">
                 <div class="p-4 border-b border-line">
-                    <div class="relative">
-                        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-faint"></i>
+                    <div class="relative flex items-center">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-faint md:top-2.5"></i>
                         <input type="text" v-model="searchQuery" placeholder="搜索邮件..."
                             class="w-full pl-9 pr-3 py-1.5 bg-surface2 text-main border border-line rounded-lg text-sm focus:ring-2 ring-accent focus:outline-none">
                     </div>
@@ -106,10 +113,15 @@
             </div>
 
             <!-- 邮件详情 -->
-            <main class="flex-1 bg-surface flex flex-col overflow-hidden">
+            <main :class="detailCls">
                 <template v-if="selectedEmail">
-                    <div class="p-4 border-b border-line flex justify-between items-center">
-                        <div class="flex items-center space-x-2">
+                    <div class="p-4 border-b border-line flex flex-wrap items-center gap-2 justify-between">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <!-- 移动端返回列表 -->
+                            <button v-if="isMobile" @click="backToList"
+                                class="px-2.5 py-1.5 bg-surface2 border border-line rounded-md text-xs font-medium text-sub hover:bg-surface3 flex items-center space-x-1">
+                                <i data-lucide="chevron-left" class="w-4 h-4"></i><span>返回</span>
+                            </button>
                             <a :href="'compose.html?to=' + encodeURIComponent(selectedEmail.sender || selectedEmail.from_addr) + '&subject=' + encodeURIComponent('Re: ' + (selectedEmail.subject||''))"
                                class="px-3 py-1.5 bg-surface2 border border-line rounded-md text-xs font-medium text-main hover:bg-surface3 flex items-center space-x-1">
                                 <i data-lucide="reply" class="w-3.5 h-3.5"></i><span>回复</span>

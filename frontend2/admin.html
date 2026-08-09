@@ -18,22 +18,29 @@
 <body class="min-h-screen bg-app">
     <div id="app" class="min-h-screen flex">
 
-        <!-- 侧栏 -->
-        <aside class="w-64 p-4 flex-shrink-0 overflow-y-auto sidebar hidden md:flex flex-col justify-between min-h-screen">
+        <!-- 移动端顶栏（仅手机显示）：汉堡 + 标题 + 设置 -->
+        <div v-if="isMobile" class="md:hidden fixed top-0 left-0 right-0 z-20 flex items-center justify-between px-3 py-2 bg-surface border-b border-line">
+            <button @click="toggleDrawer" class="p-1 text-main hover:text-accent" aria-label="菜单"><i data-lucide="menu" class="w-6 h-6"></i></button>
+            <span class="text-base font-bold text-main tracking-wide flex items-center space-x-1.5"><i data-lucide="mail-check" class="w-5 h-5 text-accent"></i>Deniia Mail</span>
+            <span class="w-8"></span>
+        </div>
+
+        <!-- 侧栏（桌面常驻 / 移动端滑出抽屉） -->
+        <aside :class="mobileSidebarCls">
             <div class="space-y-4">
                 <div class="flex items-center space-x-2 px-2">
                     <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
                     <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
                 </div>
-                <a :href="folder.page" v-for="folder in navFolders" :key="folder.id"
+                <a :href="folder.page" v-for="folder in navFolders" :key="folder.id" @click="closeDrawer"
                     class="flex items-center px-3 py-2 rounded-lg text-sm hover:bg-surface3 text-sub">
                     <i :data-lucide="folder.icon" class="w-4 h-4 mr-3"></i><span>{{ folder.label }}</span>
                 </a>
-                <a href="settings.html"
+                <a href="settings.html" @click="closeDrawer"
                     class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-sub hover:bg-surface3 rounded-lg">
                     <i data-lucide="palette" class="w-4 h-4"></i><span>设置</span>
                 </a>
-                <a href="compose.html"
+                <a href="compose.html" @click="closeDrawer"
                     class="w-full py-2.5 px-4 bg-accent hover-bg-accent-h text-accent-ink rounded-lg flex items-center justify-center space-x-2 font-medium shadow transition">
                     <i data-lucide="square-pen" class="w-4 h-4"></i><span>撰写邮件</span>
                 </a>
@@ -47,9 +54,9 @@
         </aside>
 
         <!-- 管理主体 -->
-        <main class="flex-1 p-6 md:p-10 overflow-y-auto">
+        <main class="flex-1 p-4 pt-14 md:p-10 overflow-y-auto">
             <div class="max-w-4xl mx-auto">
-                <div class="flex items-center justify-between mb-6">
+                <div class="flex items-center justify-between mb-6 flex-wrap gap-2">
                     <h1 class="text-xl font-bold text-main flex items-center space-x-2">
                         <i data-lucide="shield" class="w-6 h-6 text-warn"></i>
                         <span>管理后台</span>

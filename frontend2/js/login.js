@@ -5,6 +5,7 @@ import {
     baseUrl, defaultDomain, token, currentUser, isAdmin, isAuthenticated,
     configError, configErrorMessage, loadConfig, ensureAuth,
     mailboxes, fetchMailboxes, fetchQuota, refreshIcons, setSelectedMailbox,
+    storeGet, storeSet,
 } from './mail.js';
 
 const appConfig = {
@@ -51,11 +52,11 @@ const appConfig = {
                 currentUser.value = loginForm.value.username;
                 isAdmin.value = data.role === 'admin';
                 isAuthenticated.value = true;
-                localStorage.setItem('cf_mail_token', data.token);
-                localStorage.setItem('cf_mail_user', currentUser.value);
+                storeSet('cf_mail_token', data.token);
+                storeSet('cf_mail_user', currentUser.value);
                 await fetchMailboxes();
                 await fetchQuota();
-                if (mailboxes.value.length > 0 && !localStorage.getItem('cf_mail_selected')) {
+                if (mailboxes.value.length > 0 && !storeGet('cf_mail_selected')) {
                     setSelectedMailbox(mailboxes.value[0].address);
                 }
                 location.href = 'inbox.html';
@@ -91,7 +92,17 @@ const appConfig = {
     }
 };
 
-const app = createApp(appConfig);
-app.mount('#app');
-window.__app = app;
-console.log('[DBG-PAGE] 挂载: login.js', location.pathname, import.meta.url.includes('?v=') ? '[PJAX重挂载]' : '[全量加载]');
+// 双相 API：导入仅定义，由 pjax 驱动 boot+mount。本页数据在 mount 后的 onMounted 加载。
+async function boot() {}
+
+function mount() {
+    const app = createApp(appConfig);
+    app.mount('#app');
+    window.__app = app;
+    console.log('[DBG-PAGE] 挂载: login.js', location.pathname, import.meta.url.includes('?v=') ? '[PJAX重挂载]' : '[全量加载]');
+}
+
+export { boot, mount };
+
+// 独立整页加载时自行挂载（无 ?v= → 非 PJAX 导入）
+if (!import.meta.url.includes('v=')) boot().then(mount);

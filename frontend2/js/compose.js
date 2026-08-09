@@ -8,6 +8,7 @@ import {
     switchMailbox, navFolders, formatDate, refreshIcons, setSelectedMailbox, token,
 } from './mail.js';
 import { openMailboxDialog } from './mailbox-dialog.js';
+import { isMobile, sidebarOpen, toggleDrawer, closeDrawer, mobileSidebarCls } from './mobile-shell.js';
 
 const appConfig = {
     setup() {
@@ -109,11 +110,23 @@ const appConfig = {
             sender: currentMailbox,
             sending, errorMessage, notice, editMode, composerEditMode, composerForm,
             switchMailbox, doLogout, sendEmail, openMailboxDialog: openMailboxDialogHandler,
+            isMobile, sidebarOpen, toggleDrawer, closeDrawer, mobileSidebarCls,
         };
     }
 };
 
-const app = createApp(appConfig);
-app.mount('#app');
-window.__app = app;
-console.log('[DBG-PAGE] 挂载: compose.js', location.pathname, import.meta.url.includes('?v=') ? '[PJAX重挂载]' : '[全量加载]');
+// 双相 API（与 inbox/sent 一致）：导入仅定义，不自动挂载，由 pjax 驱动 boot+mount。
+// 本页数据在 mount 后的 onMounted(boot) 里加载（非共享列表 shell，无预载必要）。
+async function boot() { /* 数据在 mount 后的 onMounted 中准备 */ }
+
+function mount() {
+    const app = createApp(appConfig);
+    app.mount('#app');
+    window.__app = app;
+    console.log('[DBG-PAGE] 挂载: compose.js', location.pathname, import.meta.url.includes('?v=') ? '[PJAX重挂载]' : '[全量加载]');
+}
+
+export { boot, mount };
+
+// 独立整页加载时自行挂载（无 ?v= → 非 PJAX 导入）
+if (!import.meta.url.includes('v=')) boot().then(mount);

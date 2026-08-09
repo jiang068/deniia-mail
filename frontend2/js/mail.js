@@ -25,11 +25,20 @@ const ACCENT_PRESETS = [
     { name: '经典黑',   hex: '#1f2937' },
 ];
 
-const theme = ref(localStorage.getItem(THEME_KEY) || 'light');
+// ---------- 安全 localStorage 访问 ----------
+// 某些浏览器（Edge Tracking Prevention、隐私模式、禁用第三方存储等）会拦截
+// localStorage 访问并抛出 SecurityError。若不拦截，mail.js 模块顶层的一处
+// localStorage 就会拖垮整个 import 链，导致所有页面无法挂载（呈现无样式模板）。
+// 这里统一 try/catch，存储不可用时静默降级（不崩溃、不丢功能，仅不持久化）。
+function storeGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
+function storeSet(key, val) { try { window.localStorage.setItem(key, val); } catch (e) { /* storage 不可用则忽略 */ } }
+function storeRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { /* 忽略 */ } }
+
+const theme = ref(storeGet(THEME_KEY) || 'light');
 const accent = ref(getAccent(theme.value));
 
 function getAccent(mode) {
-    return localStorage.getItem(mode === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY) ||
+    return storeGet(mode === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY) ||
         DEFAULT_ACCENTS[mode];
 }
 
@@ -40,8 +49,8 @@ function applyTheme() {
     // 由强调色派生 hover 与软色
     root.style.setProperty('--c-accent-hover', shade(accent.value, -12));
     root.style.setProperty('--c-accent-soft', soft(accent.value));
-    localStorage.setItem(THEME_KEY, theme.value);
-    localStorage.setItem(theme.value === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY, accent.value);
+    storeSet(THEME_KEY, theme.value);
+    storeSet(theme.value === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY, accent.value);
 }
 
 // 使颜色变亮/变暗（amt 为负变暗），用于 hover。输入 #rrggbb。
@@ -63,7 +72,7 @@ function soft(hex) {
 // 页面进入前同步，避免主题闪烁（须尽快执行）
 function initTheme() {
     // 先按已存主题 + 强调色设置 html
-    const mode = localStorage.getItem(THEME_KEY) || 'light';
+    const mode = storeGet(THEME_KEY) || 'light';
     const acc = getAccent(mode);
     const root = document.documentElement;
     root.setAttribute('data-theme', mode);
@@ -89,8 +98,8 @@ applyTheme();
 // ---------- 配置 / 基础状态 ----------
 const baseUrl = ref('');
 const defaultDomain = ref('your-domain.com');
-const token = ref(localStorage.getItem('cf_mail_token') || '');
-const currentUser = ref(localStorage.getItem('cf_mail_user') || '');
+const token = ref(storeGet('cf_mail_token') || '');
+const currentUser = ref(storeGet('cf_mail_user') || '');
 const isAdmin = ref(false);
 const isAuthenticated = ref(false);
 
@@ -147,8 +156,8 @@ function clearAuth() {
     isAdmin.value = false;
     isAuthenticated.value = false;
     lastAuthOkAt = 0;
-    localStorage.removeItem('cf_mail_token');
-    localStorage.removeItem('cf_mail_user');
+    storeRemove('cf_mail_token');
+    storeRemove('cf_mail_user');
 }
 
 // 校验登录态；返回是否已登录。未登录时可选重定向到登录页。
@@ -194,7 +203,7 @@ async function ensureAuth(redirectOnFail = true) {
 // ---------- 邮箱 ----------
 const mailboxes = ref([]);
 // 当前邮箱持久化，便于多个子页共享
-const selectedMailbox = ref(localStorage.getItem('cf_mail_selected') || '');
+const selectedMailbox = ref(storeGet('cf_mail_selected') || '');
 const quota = ref({ limit: 3, used: 0, remaining: 3 });
 
 const currentMailbox = computed(() => {
@@ -204,7 +213,7 @@ const currentMailbox = computed(() => {
 
 function setSelectedMailbox(addr) {
     selectedMailbox.value = addr;
-    localStorage.setItem('cf_mail_selected', addr);
+    storeSet('cf_mail_selected', addr);
 }
 
 // 邮箱/配额数据新鲜度：PJAX 多次挂载在 TTL 内直接复用，避免每个页面重复拉同一堆 API。
@@ -390,6 +399,8 @@ export {
     switchMailbox, setSelectedMailbox,
     // 导航/工具
     navFolders, formatDate, refreshIcons, showError,
+    // 安全存储
+    storeGet, storeSet, storeRemove,
     // 邮件渲染
     remoteContentLevel, protectContent, hasExternalImagesOf, hasAdvancedTrackersOf,
 };
