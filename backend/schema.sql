@@ -65,16 +65,18 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS sent_emails (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id      INTEGER NOT NULL,
-    resend_id    TEXT,
-    from_addr    TEXT    NOT NULL,
-    to_addrs     TEXT    NOT NULL,
-    subject      TEXT    NOT NULL,
-    text_content TEXT,
-    status       TEXT    DEFAULT 'sent',
-    created_at   TEXT    DEFAULT (datetime('now')),
-    provider     TEXT    NOT NULL DEFAULT 'resend',
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    resend_id       TEXT,
+    from_addr       TEXT    NOT NULL,
+    to_addrs        TEXT    NOT NULL,
+    subject         TEXT    NOT NULL,
+    text_content    TEXT,
+    status          TEXT    DEFAULT 'sent',
+    delivery_status TEXT    DEFAULT 'sending',
+    last_checked_at TEXT,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    provider        TEXT    NOT NULL DEFAULT 'resend',
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

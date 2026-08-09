@@ -1,0 +1,10 @@
+# Cloudflare Pages 安全响应头
+# 语法：路径 行，下一行起为 "Header: value"，空格分隔。
+# 注意：此处注释用 #，不是 /* */。
+
+/
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' cdn.tailwindcss.com unpkg.com cdnjs.cloudflare.com cdn.jsdelivr.net static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' cdn.tailwindcss.com unpkg.com fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' *;

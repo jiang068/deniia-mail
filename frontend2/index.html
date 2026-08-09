@@ -163,7 +163,7 @@
                     <div>
                         <div class="flex items-center justify-between px-2 mb-1">
                             <span class="text-xs text-slate-500 font-medium">我的邮箱</span>
-                            <button @click="generateMailbox" title="生成新邮箱"
+                            <button @click="openMailboxDialog" title="新建邮箱"
                                 class="text-slate-500 hover:text-white transition-colors">
                                 <i data-lucide="plus-circle" class="w-4 h-4"></i>
                             </button>
@@ -178,6 +178,9 @@
                             <div v-if="mailboxes.length === 0" class="text-xs text-slate-600 px-3 py-1">
                                 暂无邮箱
                             </div>
+                        </div>
+                        <div class="px-2 pt-1 text-xs text-slate-600">
+                            已用 {{ quota.used }} / {{ isAdmin ? '∞' : quota.limit }} 个
                         </div>
                     </div>
                 </div>
@@ -218,7 +221,24 @@
                             <span class="text-xs text-gray-400 flex-shrink-0">{{ formatDate(mail.received_at || mail.created_at) }}</span>
                         </div>
                         <h4 class="text-xs font-medium text-gray-800 truncate mb-1">{{ mail.subject || '(无主题)' }}</h4>
-                        <p class="text-xs text-gray-500 line-clamp-2">{{ mail.preview || mail.text_content || '(无预览)' }}</p>
+                        <div class="flex items-center gap-2">
+                            <p class="text-xs text-gray-500 line-clamp-2 flex-1 min-w-0">{{ mail.preview || (currentFolder === 'inbox' ? '(无预览)' : '') }}</p>
+                            <span v-if="mail.delivery_status && mail.delivery_status !== 'sent'"
+                                  :class="['text-xs font-medium shrink-0 px-1.5 py-0.5 rounded',
+                                      mail.delivery_status === 'delivered' ? 'text-green-700 bg-green-100' :
+                                      mail.delivery_status === 'opened' ? 'text-blue-700 bg-blue-100' :
+                                      mail.delivery_status === 'bounced' ? 'text-red-700 bg-red-100' :
+                                      mail.delivery_status === 'complained' ? 'text-orange-700 bg-orange-100' :
+                                      'text-gray-500 bg-gray-100']">
+                                {{ mail.delivery_status === 'delivered' ? '已送达' :
+                                   mail.delivery_status === 'opened' ? '已读' :
+                                   mail.delivery_status === 'bounced' ? '退回' :
+                                   mail.delivery_status === 'complained' ? '举报' :
+                                   mail.delivery_status === 'sending' ? '发送中' : mail.delivery_status }}
+                            </span>
+                            <span v-else-if="mail.delivery_status === 'sending'"
+                                  class="text-xs text-yellow-600 font-medium shrink-0">发送中</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -260,13 +280,66 @@
                             <p><span class="font-semibold text-gray-800">发件人：</span> {{ selectedEmail.sender || selectedEmail.from_addr }}</p>
                             <p><span class="font-semibold text-gray-800">收件人：</span> {{ selectedEmail.to_addrs }}</p>
                             <p><span class="font-semibold text-gray-800">时间：</span> {{ selectedEmail.received_at || selectedEmail.created_at }}</p>
+                            <p v-if="selectedEmail.delivery_status" class="flex items-center gap-1.5">
+                                <span class="font-semibold text-gray-800">状态：</span>
+                                <span :class="['text-xs font-medium px-1.5 py-0.5 rounded',
+                                    selectedEmail.delivery_status === 'delivered' ? 'text-green-700 bg-green-100' :
+                                    selectedEmail.delivery_status === 'opened' ? 'text-blue-700 bg-blue-100' :
+                                    selectedEmail.delivery_status === 'bounced' ? 'text-red-700 bg-red-100' :
+                                    selectedEmail.delivery_status === 'complained' ? 'text-orange-700 bg-orange-100' :
+                                    selectedEmail.delivery_status === 'sending' ? 'text-yellow-600 bg-yellow-100' :
+                                    'text-gray-500 bg-gray-100']">
+                                    {{ selectedEmail.delivery_status === 'delivered' ? '已送达' :
+                                       selectedEmail.delivery_status === 'opened' ? '已读' :
+                                       selectedEmail.delivery_status === 'bounced' ? '已退回' :
+                                       selectedEmail.delivery_status === 'complained' ? '被举报' :
+                                       selectedEmail.delivery_status === 'sending' ? '发送中...' :
+                                       selectedEmail.delivery_status === 'sent' ? '已发送' : selectedEmail.delivery_status }}
+                                </span>
+                            </p>
                         </div>
                     </div>
 
                     <div class="flex-1 overflow-y-auto p-6">
+                        <!-- 外链内容拦截提示 -->
+                        <div class="mb-4 p-3 rounded-lg text-xs flex flex-wrap items-center justify-between gap-3">
+                            <template v-if="remoteContentLevel === 0">
+                                <div class="flex-1 min-w-[200px] flex items-center gap-1.5 text-amber-800">
+                                    <i data-lucide="shield-alert" class="w-4 h-4 shrink-0"></i>
+                                    <span v-if="hasExternalImages || hasAdvancedTrackers">
+                                        此邮件包含远程内容（图片及可能的追踪器），出于安全已全部拦截，未加载不会泄露你的阅读状态。
+                                    </span>
+                                    <span v-else>此邮件已按最安全方式显示。</span>
+                                </div>
+                                <div v-if="hasExternalImages || hasAdvancedTrackers" class="flex gap-2 shrink-0">
+                                    <button @click="toggleRemoteContent(1)"
+                                        class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md font-medium">
+                                        只加载图片
+                                    </button>
+                                    <button @click="toggleRemoteContent(2)"
+                                        class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md font-medium">
+                                        加载全部
+                                    </button>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <div class="flex-1 min-w-[200px] flex items-center gap-1.5"
+                                    :class="remoteContentLevel === 1 ? 'text-blue-700' : 'text-red-700'">
+                                    <i data-lucide="feather" class="w-4 h-4 shrink-0"></i>
+                                    <span v-if="remoteContentLevel === 1">
+                                        已只加载图片外链。<span v-if="hasAdvancedTrackers">其余追踪资源（CSS/媒体/预加载）仍被拦截。</span>
+                                    </span>
+                                    <span v-else>已加载全部远程内容，可能泄露 IP 和阅读状态。</span>
+                                </div>
+                                <button @click="toggleRemoteContent(0)"
+                                    class="px-2.5 py-1 bg-gray-500 hover:bg-gray-600 text-white rounded-md font-medium shrink-0">
+                                    恢复拦截
+                                </button>
+                            </template>
+                        </div>
                         <div v-if="loadingDetail" class="text-sm text-gray-400 py-4">加载正文...</div>
                         <template v-else>
-                            <div v-if="viewMode === 'rendered'" class="prose max-w-none text-sm" v-html="sanitizedContent"></div>
+                            <div v-if="viewMode === 'rendered'" class="prose max-w-none text-sm" v-html="protectedContent"></div>
                             <pre v-else-if="viewMode === 'html'" class="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
                             <pre v-else-if="viewMode === 'raw'" class="bg-slate-900 text-slate-200 p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap">{{ selectedEmail.raw_content || '无 RAW 内容' }}</pre>
                         </template>
@@ -333,6 +406,54 @@
             </div>
         </div>
 
+        <!-- ===== Mailbox Creation Dialog ===== -->
+        <div v-if="showMailboxDialog" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-5">
+                <div class="flex items-center justify-between">
+                    <h3 class="font-bold text-gray-800">新建邮箱</h3>
+                    <button @click="showMailboxDialog = false" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="text-xs text-gray-500">
+                    已用 {{ quota.used }} / {{ isAdmin ? '无限制' : quota.limit }} 个
+                </div>
+
+                <!-- Random -->
+                <button @click="createRandomMailbox"
+                    class="w-full text-left p-4 border rounded-xl hover:border-indigo-300 hover:bg-indigo-50 transition flex items-center space-x-3">
+                    <div class="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                        <i data-lucide="shuffle" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-800">随机生成</p>
+                        <p class="text-xs text-gray-400">例如 3f9k2a@{{ defaultDomain }}</p>
+                    </div>
+                </button>
+
+                <!-- Custom -->
+                <div class="border rounded-xl p-4 space-y-3">
+                    <div class="flex items-center space-x-3">
+                        <div class="p-2 bg-green-100 text-green-600 rounded-lg">
+                            <i data-lucide="pencil" class="w-5 h-5"></i>
+                        </div>
+                        <p class="text-sm font-medium text-gray-800">自定义名称</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <input type="text" v-model="mailboxCustomName" placeholder="名称"
+                            class="flex-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 font-mono"
+                            @keyup.enter="createCustomMailbox">
+                        <span class="text-sm text-gray-400 font-mono">@{{ defaultDomain }}</span>
+                    </div>
+                    <button @click="createCustomMailbox"
+                        class="w-full py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium">
+                        创建
+                    </button>
+                    <p v-if="errorMessage && showMailboxDialog" class="text-xs text-red-600">{{ errorMessage }}</p>
+                </div>
+            </div>
+        </div>
+
         <!-- ===== Admin Panel (full page overlay) ===== -->
         <div v-if="showAdmin" class="fixed inset-0 bg-white z-40 overflow-y-auto">
             <div class="max-w-4xl mx-auto p-6">
@@ -377,6 +498,18 @@
                                     class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">保存</button>
                             </div>
                         </div>
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-sm font-medium text-gray-800">默认邮箱限额</p>
+                                <p class="text-xs text-gray-400">普通用户最多可创建的邮箱数（管理员不限）</p>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <input type="number" v-model.number="adminSettings.default_mailbox_limit" min="1" max="100"
+                                    class="w-20 border rounded-lg px-2 py-1 text-sm text-center">
+                                <button @click="updateDefaultMailboxLimit"
+                                    class="px-3 py-1 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">保存</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -389,6 +522,7 @@
                                 <th class="p-2">用户名</th>
                                 <th class="p-2">邮箱</th>
                                 <th class="p-2">角色</th>
+                                <th class="p-2">邮箱限额</th>
                                 <th class="p-2">创建时间</th>
                             </tr>
                         </thead>
@@ -400,10 +534,11 @@
                                     <span v-if="u.role === 'admin'" class="text-amber-600 text-xs font-medium">Admin</span>
                                     <span v-else class="text-gray-500 text-xs">User</span>
                                 </td>
+                                <td class="p-2 text-xs text-gray-500">{{ u.role === 'admin' ? '不限' : (u.mailbox_limit || '—') }}</td>
                                 <td class="p-2 text-xs text-gray-400">{{ u.created_at }}</td>
                             </tr>
                             <tr v-if="adminUsers.length === 0">
-                                <td colspan="4" class="p-4 text-center text-gray-400 text-sm">暂无用户</td>
+                                <td colspan="5" class="p-4 text-center text-gray-400 text-sm">暂无用户</td>
                             </tr>
                         </tbody>
                     </table>
