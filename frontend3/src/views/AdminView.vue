@@ -7,10 +7,21 @@ import {
 
 const ready = ref(false);
 const errorMessage = ref('');
-const activeTab = ref('settings'); // settings | users | invites | mailboxes
+const activeTab = ref('settings'); // settings | users | invites | stats | mailboxes
 
-const adminSettings = ref({ allow_registration: 'false', daily_send_limit: '50', default_mailbox_limit: '3' });
+const adminSettings = ref({ allow_registration: 'false', daily_send_limit: '50', default_mailbox_limit: '3', site_daily_limit: '100' });
 const adminUsers = ref([]);
+
+// 全站发件统计
+const siteStats = ref({ days: [], today: 0, limit: 100 });
+
+async function loadSiteStats() {
+  try {
+    const res = await fetch(`${baseUrl.value}/api/admin/sent/daily?days=30`, { headers: authHeaders() });
+    const data = await res.json();
+    siteStats.value = { days: data.days || [], today: data.today || 0, limit: data.limit || 100 };
+  } catch (e) { errorMessage.value = '加载发件统计失败: ' + e.message; }
+}
 
 // 邀请码
 const invites = ref([]);
@@ -102,8 +113,11 @@ async function updateUserQuota(user) {
   } catch (e) { errorMessage.value = '更新配额失败: ' + e.message; }
 }
 
-// 打开「邀请码」页签时按需加载列表
-watch(activeTab, async (t) => { if (t === 'invites') await loadInvites(); });
+// 打开「邀请码/发件统计」页签时按需加载
+watch(activeTab, async (t) => {
+  if (t === 'invites') await loadInvites();
+  if (t === 'stats') await loadSiteStats();
+});
 
 onMounted(async () => {
   await fetchMailboxes();
@@ -143,6 +157,8 @@ onMounted(async () => {
             :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='users' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">用户管理</button>
           <button @click="activeTab='invites'"
             :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='invites' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">邀请码</button>
+          <button @click="activeTab='stats'"
+            :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='stats' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">发件统计</button>
           <RouterLink to="/admin/mailboxes"
             class="px-4 py-1.5 rounded-md text-sm font-medium text-sub hover:bg-surface3">邮箱/邮件 ▸</RouterLink>
         </div>
@@ -173,6 +189,17 @@ onMounted(async () => {
                 <input type="number" v-model.number="adminSettings.daily_send_limit" min="1" max="10000"
                   class="w-20 bg-surface2 text-main border border-line rounded-lg px-2 py-1 text-sm text-center">
                 <button @click="updateSetting('daily_send_limit')" class="px-3 py-1 bg-accent text-accent-ink rounded-lg text-sm">保存</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-main">站点每日限额</p>
+                <p class="text-xs text-sub">全站每天最多发件数（对照 Resend 每日配额）</p>
+              </div>
+              <div class="flex items-center space-x-2">
+                <input type="number" v-model.number="adminSettings.site_daily_limit" min="1" max="1000000"
+                  class="w-24 bg-surface2 text-main border border-line rounded-lg px-2 py-1 text-sm text-center">
+                <button @click="updateSetting('site_daily_limit')" class="px-3 py-1 bg-accent text-accent-ink rounded-lg text-sm">保存</button>
               </div>
             </div>
             <div class="flex items-center justify-between">
@@ -277,6 +304,49 @@ onMounted(async () => {
                     </td>
                   </tr>
                   <tr v-if="invites.length === 0"><td colspan="5" class="p-4 text-center text-faint text-sm">暂无邀请码</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 发件统计 -->
+        <div v-else-if="activeTab==='stats'" class="space-y-6">
+          <div class="bg-surface shadow-panel border border-line rounded-xl p-6">
+            <h2 class="font-semibold text-main mb-4 flex items-center gap-2"><i data-lucide="bar-chart-3" class="w-4 h-4 text-accent"></i>全站今日发件（Resend 每日限额）</h2>
+            <div class="flex items-center gap-4 flex-wrap">
+              <div class="text-3xl font-bold text-main">{{ siteStats.today }}</div>
+              <div class="text-sub text-sm">/ {{ siteStats.limit }} 封（今日剩余 {{ Math.max(siteStats.limit - siteStats.today, 0) }}）</div>
+              <div class="flex-1 min-w-[160px] h-3 rounded-full bg-surface2 overflow-hidden">
+                <div class="h-full transition-all"
+                  :style="{ width: Math.min((siteStats.today / (siteStats.limit || 1)) * 100, 100) + '%', backgroundColor: siteStats.today >= siteStats.limit ? 'var(--c-danger)' : (siteStats.today >= siteStats.limit * 0.8 ? 'var(--c-warn)' : 'var(--c-accent)') }"></div>
+              </div>
+            </div>
+            <p class="text-xs text-sub mt-3">Resend 免费档每日限额为 100 封（3000 封/月）。可在「系统设置」里调整 <code class="text-accent">站点每日限额</code>。</p>
+          </div>
+
+          <div class="bg-surface shadow-panel border border-line rounded-xl p-6">
+            <h2 class="font-semibold text-main mb-4 flex items-center gap-2"><i data-lucide="calendar" class="w-4 h-4 text-accent"></i>最近 30 天全站发件量</h2>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left">
+                <thead>
+                  <tr class="border-b border-line text-xs text-faint">
+                    <th class="p-2">日期</th>
+                    <th class="p-2">发件数</th>
+                    <th class="p-2 w-1/2">占比</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="d in siteStats.days" :key="d.day" class="border-b border-line text-sm">
+                    <td class="p-2 text-main whitespace-nowrap">{{ d.day }}</td>
+                    <td class="p-2 font-medium" :class="d.cnt >= siteStats.limit ? 'text-danger' : 'text-sub'">{{ d.cnt }}</td>
+                    <td class="p-2">
+                      <div class="h-2 rounded-full bg-surface2 overflow-hidden">
+                        <div class="h-full" :style="{ width: Math.min((d.cnt / (siteStats.limit || 1)) * 100, 100) + '%', backgroundColor: d.cnt >= siteStats.limit ? 'var(--c-danger)' : 'var(--c-accent)' }"></div>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="siteStats.days.length === 0"><td colspan="3" class="p-4 text-center text-faint text-sm">暂无发件记录</td></tr>
                 </tbody>
               </table>
             </div>

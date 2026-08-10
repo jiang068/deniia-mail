@@ -161,7 +161,7 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
   // PUT /api/admin/settings
   if (path === '/api/admin/settings' && method === 'PUT') {
     const body = await request.json();
-    const allowed = ['allow_registration', 'daily_send_limit', 'default_mailbox_limit'];
+    const allowed = ['allow_registration', 'daily_send_limit', 'default_mailbox_limit', 'site_daily_limit'];
     if (!body.key || !allowed.includes(body.key)) {
       return json({ error: 'Invalid setting key' }, 400);
     }
@@ -413,6 +413,30 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
        ORDER BY se.created_at DESC LIMIT ?`
     ).bind(limit).all();
     return json({ sent: rows.results || [] });
+  }
+
+  // GET /api/admin/sent/daily — 全站每天发件量统计（对照 Resend 每日限额）
+  if (path === '/api/admin/sent/daily' && method === 'GET') {
+    const days = Math.min(parseInt(url.searchParams.get('days') || '14', 10), 90);
+    const rows = await env.DB.prepare(
+      `SELECT date(created_at, '+8 hours') AS day, COUNT(*) AS cnt
+       FROM sent_emails
+       WHERE provider = 'resend'
+       GROUP BY date(created_at, '+8 hours')
+       ORDER BY day DESC LIMIT ?`
+    ).bind(days).all();
+    const todayRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS cnt FROM sent_emails
+       WHERE provider = 'resend' AND date(created_at, '+8 hours') = date('now', '+8 hours')`
+    ).first();
+    const limitSetting = await env.DB.prepare(
+      "SELECT value FROM settings WHERE key = 'site_daily_limit'"
+    ).first();
+    return json({
+      days: rows.results || [],
+      today: todayRow?.cnt || 0,
+      limit: parseInt(limitSetting?.value || '100', 10),
+    });
   }
 
   // GET /api/admin/sent/:id — 管理员查看任意已发送邮件详情
@@ -1128,6 +1152,19 @@ async function handleSend(request, user, env) {
 
   if (todayCount.cnt >= dailyLimit) {
     return json({ error: `Daily send limit reached (${dailyLimit})` }, 429);
+  }
+
+  // 全站每日额度检查：所有用户当天经 Resend 发送的总量（含时区偏移）
+  const siteLimitSetting = await env.DB.prepare(
+    "SELECT value FROM settings WHERE key = 'site_daily_limit'"
+  ).first();
+  const siteDailyLimit = parseInt(siteLimitSetting?.value || '100', 10);
+  const siteTodayCount = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM sent_emails
+     WHERE provider = 'resend' AND date(created_at, '+8 hours') = date('now', '+8 hours')`
+  ).first();
+  if (siteTodayCount.cnt >= siteDailyLimit) {
+    return json({ error: `全站今日发件量已达 Resend 每日额度上限 (${siteDailyLimit}封)，请明天再试或联系管理员` }, 429);
   }
 
   // 检查 Resend API Key 是否配置
