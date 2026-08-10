@@ -7,8 +7,6 @@ import {
   switchMailbox, fetchMailboxes, clearAuth,
 } from '../stores/mail.js';
 import { mobileSidebarCls, closeDrawer, isMobile, sidebarOpen } from '../composables/mobileShell.js';
-import { openMailboxDialog } from '../composables/useMailboxDialog.js';
-import MailboxDialog from './MailboxDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -50,6 +48,12 @@ function doLogout() {
           <div class="flex items-center space-x-3"><i :data-lucide="folder.icon" class="w-4 h-4"></i><span>{{ folder.label }}</span></div>
         </RouterLink>
 
+        <RouterLink to="/mailboxes" @click="closeDrawer()"
+          :class="['flex items-center justify-between px-3 py-2 rounded-lg text-sm transition',
+            isActive('mailboxes') ? 'bg-accent-soft text-accent font-medium' : 'hover:bg-surface3 text-sub']">
+          <div class="flex items-center space-x-3"><i data-lucide="mail" class="w-4 h-4"></i><span>邮箱管理</span></div>
+        </RouterLink>
+
         <RouterLink v-if="isAdmin" to="/admin" @click="closeDrawer()"
           class="w-full flex items-center space-x-3 px-3 py-2 text-sm text-warn hover:bg-surface3 rounded-lg">
           <i data-lucide="shield" class="w-4 h-4"></i><span>管理后台</span>
@@ -64,7 +68,6 @@ function doLogout() {
         <div>
           <div class="flex items-center justify-between px-2 mb-1">
             <span class="text-xs text-faint font-medium">我的邮箱</span>
-            <button @click="openMailboxDialog()" title="新建邮箱" class="text-faint hover:text-accent"><i data-lucide="plus-circle" class="w-4 h-4"></i></button>
           </div>
           <div class="space-y-0.5 max-h-40 overflow-y-auto">
             <div v-for="mb in mailboxes" :key="mb.id"
@@ -95,7 +98,5 @@ function doLogout() {
     <!-- 移动端遮罩 -->
     <div v-if="isMobile && sidebarOpen" class="fixed inset-0 z-30" style="background:rgba(0,0,0,0.45); backdrop-filter:blur(2px);"
          @click="closeDrawer()"></div>
-
-    <MailboxDialog />
   </div>
 </template>

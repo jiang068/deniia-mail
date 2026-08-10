@@ -24,6 +24,7 @@ const routes = [
         children: [
             { path: 'inbox', name: 'inbox', component: () => import('../views/InboxView.vue') },
             { path: 'sent', name: 'sent', component: () => import('../views/SentView.vue') },
+            { path: 'mailboxes', name: 'mailboxes', component: () => import('../views/MailboxesView.vue') },
             { path: 'compose', name: 'compose', component: () => import('../views/ComposeView.vue'), props: route => ({ to: route.query.to, subject: route.query.subject, forward: route.query.forward, from: route.query.from }) },
             { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
             { path: 'admin', name: 'admin', component: () => import('../views/AdminView.vue') },

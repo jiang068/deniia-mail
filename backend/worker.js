@@ -614,6 +614,21 @@ async function handleUserRoutes(request, env, path, method, url, user) {
     return json({ ok: true, is_favorite: !!newVal });
   }
 
+  // DELETE /api/mailbox/:id — 删除用户拥有的指定邮箱
+  const delMbox = path.match(/^\/api\/mailbox\/(\d+)$/);
+  if (delMbox && method === 'DELETE') {
+    const mboxId = parseInt(delMbox[1], 10);
+    const mb = await env.DB.prepare('SELECT id FROM mailboxes WHERE id = ?').bind(mboxId).first();
+    if (!mb) return json({ error: 'Mailbox not found' }, 404);
+    if (!(await canAccessMailbox(env, user, mb.id))) return json({ error: 'Forbidden' }, 403);
+
+    // messages 表对 mailbox_id 无级联删除，须先显式删除该邮箱的邮件
+    await env.DB.prepare('DELETE FROM messages WHERE mailbox_id = ?').bind(mboxId).run();
+    // 删除 mailboxes 行；user_mailboxes 由 ON DELETE CASCADE 自动清理
+    await env.DB.prepare('DELETE FROM mailboxes WHERE id = ?').bind(mboxId).run();
+    return json({ ok: true });
+  }
+
   // ======== 随机/自定义生成邮箱 ========
 
   // GET /api/generate
