@@ -34,6 +34,11 @@ export default {
         return cors(json({ domains: [env.DOMAIN] }));
       }
 
+      // Resend Webhook：由 Resend 后台调用（免用户鉴权，靠 env.RESEND_WEBHOOK_SECRET 签名保护）
+      if (path === '/api/webhooks/resend' && method === 'POST') {
+        return await handleResendWebhook(request, env);
+      }
+
       // ========== 需要认证的路由 ==========
       const user = await authenticate(request, env);
       if (!user) return cors(json({ error: 'Unauthorized' }, 401));
@@ -717,6 +722,107 @@ async function handleUserRoutes(request, env, path, method, url, user) {
   }
 
   return json({ error: 'Not Found' }, 404);
+}
+
+/* ============================================================
+ *  Resend Webhook（实时投递状态）
+ *  由 Resend 后台在邮件事件发生时主动 POST 到此端点，
+ *  用 resend_id 更新 sent_emails.delivery_status。
+ *  免用户鉴权，靠 env.RESEND_WEBHOOK_SECRET（svix 签名）保护。
+ *  ============================================================ */
+
+async function handleResendWebhook(request, env) {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const rawBody = await request.text();
+  if (!rawBody) return new Response('Bad Request', { status: 400 });
+
+  // 若配置了 RESEND_WEBHOOK_SECRET，校验 svix 签名；未配置则公开接收（便于联调）
+  const secret = env.RESEND_WEBHOOK_SECRET;
+  if (secret) {
+    const ok = await verifySvixSignature(request, rawBody, secret);
+    if (!ok) return new Response('Invalid Signature', { status: 401 });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch (e) {
+    return new Response('Invalid Payload', { status: 400 });
+  }
+
+  const { type, data } = payload;
+  if (!type || !data || !data.email_id) {
+    return new Response('Invalid Payload', { status: 400 });
+  }
+
+  const STATUS_MAP = {
+    'email.sent': 'sent',
+    'email.delivered': 'delivered',
+    'email.bounced': 'bounced',
+    'email.complained': 'complained',
+    'email.delivery_delayed': 'delayed',
+  };
+
+  const newStatus = STATUS_MAP[type];
+  if (newStatus) {
+    await env.DB.prepare(
+      "UPDATE sent_emails SET delivery_status = ?, last_checked_at = datetime('now') WHERE resend_id = ?"
+    ).bind(newStatus, data.email_id).run();
+    console.log(`[Webhook] resend_id ${data.email_id} -> ${newStatus}`);
+  }
+
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// svix 签名校验：HMAC-SHA256(base64解码后的 key, `{svix-id}.{svix-timestamp}.{body}`)，签名以 base64 编码
+// 注意：whsec_ 密钥主体是 Base64 编码的二进制 Key，必须先解码成字节再作为 HMAC key，
+//       不能直接用 TextEncoder 编码字符串（那样会得到错误的签名）。
+async function verifySvixSignature(request, rawBody, secret) {
+  try {
+    const svixId = request.headers.get('svix-id');
+    const svixTimestamp = request.headers.get('svix-timestamp');
+    const svixSignature = request.headers.get('svix-signature');
+    if (!svixId || !svixTimestamp || !svixSignature) return false;
+
+    // 截取 whsec_ 前缀，将 Base64 主体解码为二进制字节数组
+    const keyB64 = secret.startsWith('whsec_') ? secret.slice(6) : secret;
+    const binaryString = atob(keyB64);
+    const keyBytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      keyBytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign', 'verify']
+    );
+    const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
+    const expected = await crypto.subtle.sign(
+      'HMAC', key, new TextEncoder().encode(signedContent)
+    );
+    const expectedB64 = btoa(String.fromCharCode(...new Uint8Array(expected)));
+
+    // svix-signature 在密钥轮换时可能含多个 `v1,<sig>`，以换行（或空格）分隔
+    const parts = svixSignature.replace(/\s+/g, ' ').split(' ').filter(Boolean);
+    return parts.some(part => {
+      const idx = part.indexOf(',');
+      if (idx < 0) return false;
+      const [version, sig] = [part.slice(0, idx), part.slice(idx + 1)];
+      return version === 'v1' && sig === expectedB64;
+    });
+  } catch (e) {
+    console.error('[Webhook] signature verify error:', e);
+    return false;
+  }
 }
 
 /* ============================================================

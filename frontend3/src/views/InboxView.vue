@@ -129,6 +129,7 @@ const statusMap = {
   'opened': ['已读', 'text-blue bg-blue-soft'],
   'bounced': ['已退回', 'text-danger bg-danger-soft'],
   'complained': ['被举报', 'text-warn bg-warn-soft'],
+  'delayed': ['投递延迟', 'text-warn bg-warn-soft'],
   'sent': ['已发送', 'text-sub bg-surface2'],
 };
 function statusCls(s, detail = false) {

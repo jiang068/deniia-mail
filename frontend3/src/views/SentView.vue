@@ -5,6 +5,7 @@ import {
   baseUrl, token, currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, fetchMailboxes, fetchQuota,
   formatDate, refreshIcons, protectContent, setSelectedMailbox,
+  remoteContentLevel, hasExternalImagesOf, hasAdvancedTrackersOf,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
 
@@ -41,10 +42,16 @@ const detailCls = computed(() => {
 });
 function backToList() { selectedEmail.value = null; window.scrollTo(0, 0); }
 
+const hasExternalImages = computed(() => hasExternalImagesOf(selectedEmail.value?.html || ''));
+const hasAdvancedTrackers = computed(() => hasAdvancedTrackersOf(selectedEmail.value?.html || ''));
+
 const sentContent = computed(() => {
+  remoteContentLevel.value; // 显式依赖：拦截级别变化时重新保护内容
   const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
   return protectContent(raw);
 });
+
+function setLevel(l) { remoteContentLevel.value = l; refreshIcons(); }
 
 async function fetchEmails(force = false) {
   if (!isAuthenticated.value || !currentMailbox.value) return;
@@ -72,6 +79,7 @@ async function switchMailbox(address) {
 }
 
 async function selectEmail(mail) {
+  remoteContentLevel.value = 0;
   const cacheKey = `sent-${mail.id}`;
   const cached = emailDetailCache.get(cacheKey);
   if (cached) { selectedEmail.value = { ...mail, ...cached }; await refreshIcons(); return; }
@@ -118,6 +126,7 @@ const statusMap = {
   'opened': ['已读', 'text-blue bg-blue-soft'],
   'bounced': ['已退回', 'text-danger bg-danger-soft'],
   'complained': ['被举报', 'text-warn bg-warn-soft'],
+  'delayed': ['投递延迟', 'text-warn bg-warn-soft'],
   'sent': ['已发送', 'text-sub bg-surface2'],
 };
 function statusCls(s) { const m = statusMap[s] || [s || '', 'text-sub bg-surface2']; return { t: m[0], c: m[1] }; }
@@ -200,6 +209,27 @@ watch(() => route.name, () => { fetchEmails(); });
           </div>
         </div>
         <div class="flex-1 overflow-y-auto p-4 md:p-6">
+          <div class="mb-4 p-3 rounded-lg text-xs flex flex-wrap items-center justify-between gap-3 border border-line">
+            <template v-if="remoteContentLevel === 0">
+              <div class="flex-1 min-w-[200px] flex items-center gap-1.5 text-warn">
+                <i data-lucide="shield-alert" class="w-4 h-4 shrink-0"></i>
+                <span v-if="hasExternalImages || hasAdvancedTrackers">此邮件包含远程内容（图片及可能的追踪器），已全部拦截，未泄露阅读状态。</span>
+                <span v-else>此邮件已按最安全方式显示。</span>
+              </div>
+              <div v-if="hasExternalImages || hasAdvancedTrackers" class="flex gap-2 shrink-0">
+                <button @click="setLevel(1)" class="px-2.5 py-1 bg-accent text-accent-ink rounded-md font-medium">只加载图片</button>
+                <button @click="setLevel(2)" class="px-2.5 py-1 bg-danger text-white rounded-md font-medium">加载全部</button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="flex-1 min-w-[200px] flex items-center gap-1.5" :class="remoteContentLevel===1 ? 'text-blue' : 'text-danger'">
+                <i data-lucide="feather" class="w-4 h-4 shrink-0"></i>
+                <span v-if="remoteContentLevel===1">已只加载图片外链。<span v-if="hasAdvancedTrackers">其余追踪资源（CSS/媒体/预加载）仍被拦截。</span></span>
+                <span v-else>已加载全部远程内容，可能泄露 IP 和阅读状态。</span>
+              </div>
+              <button @click="setLevel(0)" class="px-2.5 py-1 bg-surface2 text-sub border border-line rounded-md font-medium shrink-0">恢复拦截</button>
+            </template>
+          </div>
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
           <div v-else-if="viewMode==='rendered'" class="mail-body" v-html="sentContent"></div>
           <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>

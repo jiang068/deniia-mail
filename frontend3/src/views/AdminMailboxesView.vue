@@ -23,6 +23,13 @@ const sentEmails = ref([]);
 const selectedEmail = ref(null);
 const viewMode = ref('rendered'); // rendered | html | raw
 
+const DELIVERY_LABELS = {
+  sending: '发送中', sent: '已发送', delivered: '已送达',
+  bounced: '已退回', complained: '被举报', delayed: '投递延迟',
+  opened: '已读',
+};
+function deliveryText(s) { return DELIVERY_LABELS[s] || (s || '—'); }
+
 const protectedContent = computed(() => {
   remoteContentLevel.value;
   const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
@@ -231,7 +238,7 @@ if (isAdmin.value) loadMailboxes();
             <p><span class="font-semibold text-main">收件人：</span> {{ selectedEmail.to_addrs }}</p>
             <p class="flex items-center gap-1.5">
               <span class="font-semibold text-main">状态：</span>
-              <span :class="['px-1.5 py-0.5 rounded', selectedEmail.delivery_status==='delivered' ? 'text-green bg-green-soft' : 'text-warn bg-warn-soft']">{{ selectedEmail.delivery_status || '—' }}</span>
+              <span :class="['px-1.5 py-0.5 rounded', selectedEmail.delivery_status==='delivered' ? 'text-green bg-green-soft' : 'text-warn bg-warn-soft']">{{ deliveryText(selectedEmail.delivery_status) }}</span>
             </p>
             <p><span class="font-semibold text-main">时间：</span> {{ selectedEmail.created_at }}</p>
           </template>
