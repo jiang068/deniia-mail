@@ -1,4 +1,0 @@
-{
-  "baseUrl": "https://your-worker-subdomain.workers.dev",
-  "defaultDomain": "your-domain.com"
-}
