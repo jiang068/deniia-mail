@@ -1,21 +1,55 @@
-# Deniia Mail
+# Mail（化名，原 Deniia Mail）
 
-Serverless webmail system powered by Cloudflare Workers + D1 + Email Routing + Resend.
+Serverless 网页邮箱系统，基于 Cloudflare Workers + D1 + Email Routing + Resend。
+
+本仓库分为两个独立项目，可分别部署：
 
 ```
-deniia-mail/
-├── backend/          Cloudflare Worker 后端（API、收件、发件）
-│   ├── README.md     部署教程、API 文档
-│   ├── worker.js     源码
-│   ├── schema.sql    数据库建表脚本
-│   └── wrangler.toml.example  配置模板
+mail/
+├── backend/          Cloudflare Worker 后端（API、收件、发件、管理后台数据）
+│   ├── README.md     后端部署教程、API 文档
+│   ├── worker.js     后端源码
+│   ├── schema.sql    D1 建表脚本
+│   ├── migrations/   增量迁移脚本
+│   └── wrangler.toml.example  配置模板（复制为 wrangler.toml 填写）
 │
-├── frontend/         网页前端（原生 HTML + JS）
-│   ├── README.md     部署教程
-│   ├── index.html    主页面
-│   └── app.js        交互逻辑
+├── frontend/         前端（Vue 3 + Vite + Vue Router SPA）
+│   ├── README.md     前端部署教程
+│   ├── public/config.json.example  运行时配置模板（复制为 config.json 填写）
+│   └── src/          源代码（收件箱、发件箱、撰写、管理后台等页面）
 │
 └── README.md         本文件
 ```
 
-两个项目相互独立，分别部署。详见各子目录的 README。
+> **隐私说明**：本示例中的域名、Worker 地址、数据库 ID 均为占位符（如 `example.com`）。
+> 部署时请按各子目录 README 的指引，替换为你自己的域名与账号信息。
+
+---
+
+## 技术栈
+
+| 组件 | 技术 |
+|------|------|
+| 后端 | Cloudflare Workers（JavaScript） |
+| 数据库 | Cloudflare D1（SQLite） |
+| 收件 | Cloudflare Email Routing |
+| 发件 | Resend REST API |
+| 邮件解析 | postal-mime |
+| 前端 | Vue 3 + Vite + Vue Router |
+
+## 部署概览
+
+1. **后端**：见 [`backend/README.md`](backend/README.md)
+   - 配置 `wrangler.toml`（`example.com` → 你的域名、D1 数据库 ID）
+   - 配置 `RESEND_API_KEY`（发件）、`RESEND_WEBHOOK_SECRET`（投递状态回调）
+   - Cloudflare Email Routing 收件 → Worker
+   - 用 `schema.sql` + `migrations/` 初始化 D1
+
+2. **前端**：见 [`frontend/README.md`](frontend/README.md)
+   - `npm install` → `npm run build`
+   - 把 `dist/` 部署到 Cloudflare Pages
+   - 配置 `config.json`（后端 Worker 地址 + 邮箱域名）
+
+两个项目相互独立，后端提供 API，前端消费 API，可在同一域名下或跨域部署。
+
+详见各子目录的 README。

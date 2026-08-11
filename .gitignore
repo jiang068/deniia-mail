@@ -1,9 +1,37 @@
+# ---- 依赖 / 产物 ----
 node_modules/
-.wrangler/
-.env
-*.local
+dist/
+dist-ssr/
 *.zip
+*.tgz
+
+# ---- Cloudflare / Wrangler ----
+.wrangler/
+.dev.vars
+
+# ---- 环境变量 / 密钥 ----
+.env
+.env.*
+!.env.example
+*.local
+
+# ---- 编辑器 / 系统 ----
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+*.swp
+
+# ---- 日志 ----
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- 本地运行配置（含真实域名/密钥，勿提交）----
+# 前端运行时配置：复制 config.json.example 为 config.json 填写
+frontend/config.json
+frontend/public/config.json
+# 后端 wrangler 配置：复制 wrangler.toml.example 为 wrangler.toml 填写，勿提交真实 database_id
+backend/wrangler.toml

@@ -1,0 +1,4 @@
+{
+  "baseUrl": "https://YOUR-WORKER.your-account.workers.dev",
+  "defaultDomain": "example.com"
+}

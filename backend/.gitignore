@@ -1,6 +1,21 @@
+# ---- 依赖 ----
 node_modules/
+
+# ---- Cloudflare / 本地运行 ----
 .wrangler/
 dist/
+.dev.vars
+
+# ---- 密钥 / 环境 ----
 .env
+.env.*
+!.env.example
 *.local
+
+# ---- 真实部署配置（含 database_id 与域名，勿提交）----
+# 部署前复制 wrangler.toml.example 为 wrangler.toml 并填写
 wrangler.toml
+
+# ---- 日志 ----
+*.log
+npm-debug.log*

@@ -21,7 +21,8 @@ Thumbs.db
 npm-debug.log*
 *.tsbuildinfo
 
-# 项目根目录的旧 config.json 副本（运行时不使用，勿提交）
+# ---- 运行时配置（含真实域名/后端 URL，勿提交）----
+# 部署前复制 config.json.example 为对应位置的 config.json 并填写。
+# public/config.json 会被 Vite 拷入 dist，供 SPA 在 /config.json 运行时读取；
 config.json
-# 但 public/config.json 会被 Vite 拷贝进 dist 并由 SPA 在 /config.json 运行时读取，必须提交
-!public/config.json
+public/config.json

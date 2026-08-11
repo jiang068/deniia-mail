@@ -1,5 +1,5 @@
 {
-  "name": "deniia-mail-frontend3",
+  "name": "deniia-mail-frontend",
   "private": true,
   "description": "Deniia Mail 前端（Vue 3 + Vite + Vue Router SPA）",
   "version": "3.0.0",
