@@ -1,2 +1,9 @@
-# SPA 历史模式回退：未匹配到静态资源的请求全部交给 index.html
+# SPA 历史模式回退：无扩展名的路由路径（/inbox、/admin 等）交给 index.html。
 /* /index.html 200
+# 带扩展名的缺失路径也回退到 index.html（保持 SPA 一致性）
+/*.* /index.html
+
+# 发版/边缘同步窗口内缺失的构建资源返回真实 404，
+# 避免被兜底成 text/html 导致动态 import 模块报 "MIME type text/html" 而卡死/白屏。
+# Pages 的 _redirects 是"最后匹配优先"，故最具体的 /assets/* 404 放在最后。
+/assets/* 404

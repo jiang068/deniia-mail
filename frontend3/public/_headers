@@ -1,18 +1,23 @@
-# Cloudflare Pages 安全响应头（SPA 版）
-/
+# Cloudflare Pages 安全响应头（SPA 版）—— 同时应用于 HTML 与静态资源
+/*
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(), microphone=(), camera=()
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src 'self' fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' *;
-  Cache-Control: no-cache
 
-# 构建产物可缓存
+# 静态资产长期缓存（文件名已自带唯一 Hash，内容不可变）
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-/*.css
-  Cache-Control: public, max-age=300
+# 入口 HTML 彻底禁用缓存：确保发版后第一时间拿到最新的 index.html 与 JS 映射，
+# 避免旧 index.html 引用已删除的旧哈希 asset 导致动态 import 报 MIME text/html 白屏卡死。
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
 
-/*.js
-  Cache-Control: public, max-age=300
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0

@@ -2,9 +2,10 @@
 import { ref, computed } from 'vue';
 import {
   baseUrl, isAdmin, authHeaders, refreshIcons,
-  formatDate, protectContent, remoteContentLevel,
+  formatDate, buildEmailDocument, remoteContentLevel,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
+import EmailFrame from '../components/EmailFrame.vue';
 
 const loadingMailboxes = ref(false);
 const loadingEmails = ref(false);
@@ -33,7 +34,7 @@ function deliveryText(s) { return DELIVERY_LABELS[s] || (s || '—'); }
 const protectedContent = computed(() => {
   remoteContentLevel.value;
   const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
-  return protectContent(raw);
+  return buildEmailDocument(raw);
 });
 
 // 移动端：三级下钻（仅收件箱模式有邮箱层级）
@@ -250,7 +251,7 @@ if (isAdmin.value) loadMailboxes();
         </div>
         <div class="flex-1 overflow-y-auto p-4">
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <div v-else-if="viewMode==='rendered'" class="mail-body" v-html="protectedContent"></div>
+          <div v-else-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
           <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
           <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.raw_content || '无源码内容' }}</pre>
         </div>

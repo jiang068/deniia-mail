@@ -4,10 +4,11 @@ import {
   baseUrl, token, currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, fetchMailboxes,
   formatDate, refreshIcons,
-  remoteContentLevel, protectContent, hasExternalImagesOf, hasAdvancedTrackersOf,
+  remoteContentLevel, buildEmailDocument, hasExternalImagesOf, hasAdvancedTrackersOf,
   setSelectedMailbox,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
+import EmailFrame from '../components/EmailFrame.vue';
 
 const loadingEmails = ref(false);
 const loadingDetail = ref(false);
@@ -28,7 +29,7 @@ const hasAdvancedTrackers = computed(() => hasAdvancedTrackersOf(selectedEmail.v
 const protectedContent = computed(() => {
   remoteContentLevel.value; // 显式依赖
   const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
-  return protectContent(raw);
+  return buildEmailDocument(raw);
 });
 
 const filteredEmails = computed(() => {
@@ -245,7 +246,7 @@ watch(() => selectedMailbox.value, async (nv) => {
           </div>
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
           <template v-else>
-            <div v-if="viewMode==='rendered'" class="mail-body" v-html="protectedContent"></div>
+            <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
             <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
             <pre v-else-if="viewMode==='raw'" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.raw_content || '无 RAW 内容' }}</pre>
           </template>

@@ -4,10 +4,11 @@ import { useRoute } from 'vue-router';
 import {
   baseUrl, token, currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, fetchMailboxes, fetchQuota,
-  formatDate, refreshIcons, protectContent, setSelectedMailbox,
+  formatDate, refreshIcons, buildEmailDocument, setSelectedMailbox,
   remoteContentLevel, hasExternalImagesOf, hasAdvancedTrackersOf,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
+import EmailFrame from '../components/EmailFrame.vue';
 
 const route = useRoute();
 
@@ -48,7 +49,7 @@ const hasAdvancedTrackers = computed(() => hasAdvancedTrackersOf(selectedEmail.v
 const sentContent = computed(() => {
   remoteContentLevel.value; // 显式依赖：拦截级别变化时重新保护内容
   const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
-  return protectContent(raw);
+  return buildEmailDocument(raw);
 });
 
 function setLevel(l) { remoteContentLevel.value = l; refreshIcons(); }
@@ -231,7 +232,7 @@ watch(() => route.name, () => { fetchEmails(); });
             </template>
           </div>
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <div v-else-if="viewMode==='rendered'" class="mail-body" v-html="sentContent"></div>
+          <div v-else-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="sentContent" /></div>
           <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
           <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.text_content || '无源码内容' }}</pre>
         </div>

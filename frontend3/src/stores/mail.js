@@ -253,7 +253,7 @@ function sanitizeStyleUrls(styleText, allowRemote) {
     });
 }
 
-function protectContent(rawHtml) {
+function sanitizeEmail(rawHtml) {
     let html = rawHtml || '';
     const level = remoteContentLevel.value;
     const allowImages = level >= 1;
@@ -328,7 +328,32 @@ function protectContent(rawHtml) {
         a.setAttribute('rel', 'noopener noreferrer nofollow');
     });
 
-    return styleBlock + body.innerHTML;
+    return { styles: styleBlock, body: body.innerHTML };
+}
+
+function protectContent(rawHtml) {
+    const r = sanitizeEmail(rawHtml);
+    return r.styles + r.body;
+}
+
+// 供 iframe srcdoc 使用的完整独立 HTML 文档，隔离邮件样式，避免泄漏到应用 UI。
+// 邮件里的全局选择器（如 body{...}、h1{...}）只在 iframe 文档内生效。
+function buildEmailDocument(rawHtml) {
+    const r = sanitizeEmail(rawHtml);
+    const themeBg = getComputedStyle(document.documentElement).getPropertyValue('--c-app').trim() || '#ffffff';
+    return `<!DOCTYPE html>
+<html lang="zh-CN" style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  html, body { margin:0; padding:0; }
+  body { background: ${themeBg}; }
+</style>
+${r.styles}
+</head>
+<body>${r.body}</body>
+</html>`;
 }
 
 // 检测是否含外链图片
@@ -360,5 +385,5 @@ export {
     // 安全存储
     storeGet, storeSet, storeRemove,
     // 邮件渲染
-    remoteContentLevel, protectContent, hasExternalImagesOf, hasAdvancedTrackersOf,
+    remoteContentLevel, protectContent, buildEmailDocument, hasExternalImagesOf, hasAdvancedTrackersOf,
 };
