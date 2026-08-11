@@ -12,6 +12,76 @@ const activeTab = ref('settings'); // settings | users | invites | stats | mailb
 const adminSettings = ref({ allow_registration: 'false', daily_send_limit: '50', default_mailbox_limit: '3', site_daily_limit: '100' });
 const adminUsers = ref([]);
 
+// Catch-all 发件白名单
+const whitelist = ref([]);
+const globalTarget = ref('');
+const myMailboxes = ref([]);
+const catchallMode = ref('off'); // off | whitelist | all
+const newDomain = ref('');
+const newTarget = ref('');
+const wlAdding = ref(false);
+
+const CATCHALL_MODES = [
+  { key: 'off', label: '关闭', desc: '系统不存在的邮箱来信直接丢弃（推荐默认）' },
+  { key: 'whitelist', label: '白名单', desc: '仅白名单/`*` 中的发件方被接收' },
+  { key: 'all', label: '全放开', desc: '任意发件方可投递到全局目标邮箱' },
+];
+
+async function loadWhitelist() {
+  try {
+    const res = await fetch(`${baseUrl.value}/api/admin/whitelist`, { headers: authHeaders() });
+    const data = await res.json();
+    whitelist.value = data.whitelist || [];
+    globalTarget.value = data.global_target || '';
+    myMailboxes.value = data.my_mailboxes || [];
+    catchallMode.value = data.mode || 'off';
+  } catch (e) { errorMessage.value = '加载白名单失败: ' + e.message; }
+}
+
+function saveCatchallMode() {
+  fetch(`${baseUrl.value}/api/admin/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ key: 'catchall_mode', value: catchallMode.value })
+  }).then(r => r.json()).then(d => { if (!d.ok) errorMessage.value = '更新失败'; })
+    .catch(e => errorMessage.value = '更新失败: ' + e.message);
+}
+
+async function addWhitelist() {
+  const domain = newDomain.value.trim().toLowerCase();
+  if (!domain) { errorMessage.value = '请填写域名后缀'; return; }
+  wlAdding.value = true; errorMessage.value = '';
+  try {
+    const res = await fetch(`${baseUrl.value}/api/admin/whitelist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ domain_suffix: domain, target: newTarget.value.trim() })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '添加失败');
+    newDomain.value = ''; newTarget.value = '';
+    await loadWhitelist();
+  } catch (e) { errorMessage.value = '添加失败: ' + e.message; }
+  finally { wlAdding.value = false; }
+}
+
+async function removeWhitelist(id) {
+  if (!confirm('确定删除该白名单条目？')) return;
+  try {
+    await fetch(`${baseUrl.value}/api/admin/whitelist/${id}`, { method: 'DELETE', headers: authHeaders() });
+    await loadWhitelist();
+  } catch (e) { errorMessage.value = '删除失败: ' + e.message; }
+}
+
+function saveGlobalTarget() {
+  fetch(`${baseUrl.value}/api/admin/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ key: 'catchall_target', value: globalTarget.value.trim() })
+  }).then(r => r.json()).then(d => { if (!d.ok) errorMessage.value = '更新失败'; })
+    .catch(e => errorMessage.value = '更新失败: ' + e.message);
+}
+
 // 全站发件统计
 const siteStats = ref({ days: [], today: 0, limit: 100 });
 
@@ -117,6 +187,7 @@ async function updateUserQuota(user) {
 watch(activeTab, async (t) => {
   if (t === 'invites') await loadInvites();
   if (t === 'stats') await loadSiteStats();
+  if (t === 'whitelist') await loadWhitelist();
 });
 
 onMounted(async () => {
@@ -159,6 +230,8 @@ onMounted(async () => {
             :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='invites' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">邀请码</button>
           <button @click="activeTab='stats'"
             :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='stats' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">发件统计</button>
+          <button @click="activeTab='whitelist'"
+            :class="['px-4 py-1.5 rounded-md text-sm font-medium', activeTab==='whitelist' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">发件白名单</button>
           <RouterLink to="/admin/mailboxes"
             class="px-4 py-1.5 rounded-md text-sm font-medium text-sub hover:bg-surface3">邮箱/邮件 ▸</RouterLink>
         </div>
@@ -349,6 +422,89 @@ onMounted(async () => {
                   <tr v-if="siteStats.days.length === 0"><td colspan="3" class="p-4 text-center text-faint text-sm">暂无发件记录</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Catch-all 发件白名单 -->
+        <div v-else-if="activeTab==='whitelist'" class="space-y-6">
+          <div class="bg-surface shadow-panel border border-line rounded-xl p-6">
+            <h2 class="font-semibold text-main mb-2 flex items-center gap-2"><i data-lucide="filter" class="w-4 h-4 text-accent"></i>发件白名单</h2>
+
+            <!-- 模式开关 -->
+            <div class="flex items-center justify-between flex-wrap gap-2 mb-4 border border-line rounded-lg p-3">
+              <div>
+                <p class="text-sm font-medium text-main">catch-all 模式</p>
+                <p class="text-xs text-sub mt-0.5">{{ (CATCHALL_MODES.find(m => m.key === catchallMode) || {}).desc }}</p>
+              </div>
+              <div class="flex gap-1 bg-surface2 p-1 rounded-lg">
+                <button v-for="m in CATCHALL_MODES" :key="m.key" @click="catchallMode = m.key"
+                  :class="['px-3 py-1.5 rounded-md text-sm font-medium transition', catchallMode === m.key ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">
+                  {{ m.label }}
+                </button>
+                <button @click="saveCatchallMode"
+                  class="px-3 py-1.5 bg-accent text-accent-ink rounded-md text-sm font-medium ml-1">保存</button>
+              </div>
+            </div>
+
+            <p class="text-xs text-sub mb-4">当收件地址为「系统中不存在的邮箱」时，按上方模式处理：<strong class="text-sub">关闭</strong>=直接丢弃；<strong class="text-sub">白名单</strong>=仅命中的发件方转入目标邮箱（按<strong class="text-sub">后缀匹配</strong>，如 <code class="text-accent">gmail.com</code> 也匹配 <code class="text-accent">a@sub.gmail.com</code>；<code class="text-accent">*</code> 匹配任意发件方）；<strong class="text-warn">全放开</strong>=任意发件方都转入全局目标邮箱。</p>
+            <div v-if="catchallMode === 'all'"
+              class="bg-warn-soft border border-line text-warn text-xs rounded-lg px-3 py-2 mb-4">
+              已开启「全放开」：任何陌生发件方都能向系统中不存在的邮箱投递，会消耗存储并可能收到垃圾/刷量邮件。
+            </div>
+
+            <!-- 全局目标邮箱 -->
+            <div class="flex items-center justify-between flex-wrap gap-2 border border-line rounded-lg p-3 mb-4">
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-main">全局目标邮箱</p>
+                <p class="text-xs text-sub">白名单条目未指定目标时，转入此邮箱（需为系统内已存在的邮箱）</p>
+              </div>
+              <div class="flex items-center space-x-2">
+                <select v-model="globalTarget"
+                  class="w-64 bg-surface2 text-main border border-line rounded-lg px-2 py-1.5 text-sm">
+                  <option value="">（请选择邮箱）</option>
+                  <option v-for="addr in myMailboxes" :key="addr" :value="addr">{{ addr }}</option>
+                </select>
+                <button @click="saveGlobalTarget" class="px-3 py-1 bg-accent text-accent-ink rounded-lg text-sm">保存</button>
+              </div>
+            </div>
+            <p v-if="myMailboxes.length === 0" class="text-xs text-danger mb-4">你名下还没有邮箱，无法设置全局目标。请先在「邮箱管理」页申请一个。</p>
+
+            <!-- 添加 -->
+            <div class="border border-line rounded-lg p-3">
+              <p class="text-sm font-medium text-main mb-2">添加白名单域名</p>
+              <div class="flex items-center space-x-2 flex-wrap gap-2">
+                <input v-model="newDomain" type="text" placeholder="域名后缀，如 example.com；* 为全放开"
+                  class="flex-1 min-w-[200px] bg-surface2 text-main border border-line rounded-lg px-2 py-1.5 text-sm font-mono">
+                <input v-model="newTarget" type="text" placeholder="目标邮箱（可选，留空用全局）"
+                  class="flex-1 min-w-[200px] bg-surface2 text-main border border-line rounded-lg px-2 py-1.5 text-sm">
+                <button @click="addWhitelist" :disabled="wlAdding"
+                  class="px-4 py-1.5 bg-accent text-accent-ink rounded-lg text-sm font-medium disabled:opacity-50">{{ wlAdding ? '添加中...' : '添加' }}</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-surface shadow-panel border border-line rounded-xl p-6">
+            <h2 class="font-semibold text-main mb-3 flex items-center gap-2"><i data-lucide="list" class="w-4 h-4 text-accent"></i>白名单列表（{{ whitelist.length }}）</h2>
+            <div class="space-y-2">
+              <div v-for="w in whitelist" :key="w.id"
+                class="flex items-center justify-between gap-2 px-4 py-3 border border-line rounded-lg">
+                <div class="min-w-0">
+                  <div class="flex items-center space-x-2">
+                    <i data-lucide="globe" class="w-4 h-4 shrink-0 text-faint"></i>
+                    <span class="text-sm text-main font-mono truncate">*{{ w.domain_suffix }}</span>
+                  </div>
+                  <div class="text-xs text-sub mt-0.5 truncate">
+                    → {{ w.target || globalTarget || '（未配置目标）' }}
+                    <span v-if="!w.target && globalTarget" class="text-faint">（全局）</span>
+                  </div>
+                </div>
+                <button @click="removeWhitelist(w.id)"
+                  class="shrink-0 px-2.5 py-1 text-xs text-danger hover:bg-danger-soft rounded-md">删除</button>
+              </div>
+              <div v-if="whitelist.length === 0" class="text-sm text-faint text-center py-6">
+                还没有白名单条目。加入域名后，来自该域名的邮件才能进入系统内不存在的邮箱。
+              </div>
             </div>
           </div>
         </div>

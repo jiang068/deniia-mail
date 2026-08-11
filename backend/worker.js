@@ -66,6 +66,9 @@ export default {
       const rawRecipients = Array.isArray(message.to) ? message.to : [message.to];
       const recipients = rawRecipients.map(r => (typeof r === 'string' ? r : r?.address || r));
 
+      const senderAddr = (parsed.from?.address || message.from || '').toLowerCase();
+      const senderDomain = senderAddr.slice(senderAddr.lastIndexOf('@') + 1);
+
       for (const toAddr of recipients) {
         if (!toAddr) continue;
         const cleanTo = toAddr.toLowerCase().trim();
@@ -75,9 +78,17 @@ export default {
           'SELECT id, forward_to FROM mailboxes WHERE address = ?'
         ).bind(cleanTo).first();
 
+        // 目标邮箱：默认就是收件地址所属邮箱；若系统里不存在该邮箱，
+        // 尝试按发件方域名后缀白名单路由到指定的 catch-all 目标邮箱。
+        let targetMailbox = mailbox ? mailbox.id : null;
+
         if (!mailbox) {
-          console.log(`[Email] 未找到邮箱 ${cleanTo}，跳过入库`);
-          continue;
+          targetMailbox = await resolveCatchallTarget(env, senderDomain);
+          if (!targetMailbox) {
+            console.log(`[Email] 未找到邮箱 ${cleanTo} 且发件方不在白名单，丢弃`);
+            continue;
+          }
+          console.log(`[Email] 白名单命中：${cleanTo} -> ${targetMailbox}`);
         }
 
         const subject = parsed.subject || '(No Subject)';
@@ -95,8 +106,8 @@ export default {
           `INSERT INTO messages (mailbox_id, sender, to_addrs, subject, preview, raw_content, verification_code)
            VALUES (?, ?, ?, ?, ?, ?, ?)`
         ).bind(
-          mailbox.id,
-          parsed.from?.address || message.from || '',
+          targetMailbox,
+          senderAddr,
           cleanTo,
           subject,
           preview || null,
@@ -161,7 +172,7 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
   // PUT /api/admin/settings
   if (path === '/api/admin/settings' && method === 'PUT') {
     const body = await request.json();
-    const allowed = ['allow_registration', 'daily_send_limit', 'default_mailbox_limit', 'site_daily_limit'];
+    const allowed = ['allow_registration', 'daily_send_limit', 'default_mailbox_limit', 'site_daily_limit', 'catchall_target', 'catchall_mode'];
     if (!body.key || !allowed.includes(body.key)) {
       return json({ error: 'Invalid setting key' }, 400);
     }
@@ -457,6 +468,64 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
         text: content
       }
     });
+  }
+
+  // ==================== Catch-all 发件白名单 ====================
+
+  // GET /api/admin/whitelist — 白名单列表 + 全局目标
+  if (path === '/api/admin/whitelist' && method === 'GET') {
+    const rows = await env.DB.prepare(
+      'SELECT id, domain_suffix, target, note, created_at FROM catchall_whitelist ORDER BY created_at DESC'
+    ).all();
+    const global = await env.DB.prepare(
+      "SELECT value FROM settings WHERE key = 'catchall_target'"
+    ).first();
+    const modeRow = await env.DB.prepare(
+      "SELECT value FROM settings WHERE key = 'catchall_mode'"
+    ).first();
+
+    // 可选目标范围：当前管理员账户下管辖的邮箱
+    const ownRows = await env.DB.prepare(
+      `SELECT m.id, m.address FROM user_mailboxes um
+       JOIN mailboxes m ON m.id = um.mailbox_id
+       WHERE um.user_id = ? ORDER BY m.address ASC`
+    ).bind(user.id).all();
+
+    return json({
+      whitelist: rows.results || [],
+      global_target: global?.value || '',
+      mode: modeRow?.value || 'off',
+      my_mailboxes: (ownRows.results || []).map(r => r.address),
+    });
+  }
+
+  // POST /api/admin/whitelist — 添加一条白名单（domain_suffix 必填，target 可选）
+  if (path === '/api/admin/whitelist' && method === 'POST') {
+    const body = await request.json();
+    const suffix = String(body.domain_suffix || '').trim().toLowerCase();
+    if (!suffix || (suffix !== '*' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(suffix))) {
+      return json({ error: '域名后缀无效，例如 gmail.com（"*" 表示匹配任意发件方）' }, 400);
+    }
+    let target = String(body.target || '').trim().toLowerCase();
+    if (target) {
+      const m = await env.DB.prepare('SELECT id FROM mailboxes WHERE address = ?').bind(target).first();
+      if (!m) return json({ error: '目标邮箱不存在' }, 400);
+    } else {
+      target = ''; // 未指定则回退到全局 catchall_target
+    }
+    const note = String(body.note || '').trim().slice(0, 200);
+    await env.DB.prepare(
+      'INSERT INTO catchall_whitelist (domain_suffix, target, note) VALUES (?, ?, ?)'
+    ).bind(suffix, target || null, note || null).run();
+    return json({ ok: true });
+  }
+
+  // DELETE /api/admin/whitelist/:id — 删除白名单条目
+  const wlDelete = path.match(/^\/api\/admin\/whitelist\/(\d+)$/);
+  if (wlDelete && method === 'DELETE') {
+    const id = parseInt(wlDelete[1], 10);
+    await env.DB.prepare('DELETE FROM catchall_whitelist WHERE id = ?').bind(id).run();
+    return json({ ok: true });
   }
 
   return json({ error: 'Not Found' }, 404);
@@ -769,6 +838,49 @@ async function handleUserRoutes(request, env, path, method, url, user) {
  *  用 resend_id 更新 sent_emails.delivery_status。
  *  免用户鉴权，靠 env.RESEND_WEBHOOK_SECRET（svix 签名）保护。
  *  ============================================================ */
+
+async function resolveCatchallTarget(env, senderAddr) {
+  const senderDomain = String(senderAddr || '').toLowerCase();
+  if (!senderDomain) return null;
+
+  // 模式：off = 关闭（默认，直接丢弃）；whitelist = 仅白名单/`*`；all = 全放开（任意发件方）
+  const modeRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'catchall_mode'").first();
+  const mode = modeRow?.value || 'off';
+
+  if (mode === 'off') return null;
+
+  let preferredTarget = '';
+  if (mode === 'whitelist') {
+    let rows;
+    try {
+      rows = await env.DB.prepare('SELECT domain_suffix, target FROM catchall_whitelist').all();
+    } catch (e) {
+      console.error('[Email] 读取白名单出错（表可能未迁移）:', e.message);
+      return null;
+    }
+    for (const r of (rows.results || [])) {
+      const suffix = String(r.domain_suffix || '').toLowerCase();
+      if (!suffix) continue;
+      // 后缀匹配：域名等于后缀，或以 "后缀." 结尾（含子域）。"*" 匹配任意发件方。
+      if (suffix === '*' || senderDomain === suffix || senderDomain.endsWith('.' + suffix)) {
+        preferredTarget = r.target;
+        break;
+      }
+    }
+    if (preferredTarget === undefined || preferredTarget === null) return null; // 白名单未命中，丢弃
+  }
+
+  // 解析目标邮箱地址：条目 target 未指定时回退到全局 catchall_target
+  let target = String(preferredTarget || '').toLowerCase().trim();
+  if (!target) {
+    const s = await env.DB.prepare("SELECT value FROM settings WHERE key = 'catchall_target'").first();
+    target = String(s?.value || '').toLowerCase().trim();
+  }
+  if (!target) return null; // 没有配置目标邮箱，无法投递
+
+  const mb = await env.DB.prepare('SELECT id FROM mailboxes WHERE address = ?').bind(target).first();
+  return mb ? mb.id : null;
+}
 
 async function handleResendWebhook(request, env) {
   if (request.method !== 'POST') {
