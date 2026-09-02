@@ -1,8 +1,8 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue';
 import {
-  baseUrl, isAdmin, fetchMailboxes,
-  refreshIcons, authHeaders,
+  isAdmin, fetchMailboxes, apiFetch,
+  refreshIcons,
 } from '../stores/mail.js';
 
 const ready = ref(false);
@@ -29,7 +29,7 @@ const CATCHALL_MODES = [
 
 async function loadWhitelist() {
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/whitelist`, { headers: authHeaders() });
+    const res = await apiFetch('/api/admin/whitelist');
     const data = await res.json();
     whitelist.value = data.whitelist || [];
     globalTarget.value = data.global_target || '';
@@ -39,9 +39,9 @@ async function loadWhitelist() {
 }
 
 function saveCatchallMode() {
-  fetch(`${baseUrl.value}/api/admin/settings`, {
+  apiFetch('/api/admin/settings', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key: 'catchall_mode', value: catchallMode.value })
   }).then(r => r.json()).then(d => { if (!d.ok) errorMessage.value = '更新失败'; })
     .catch(e => errorMessage.value = '更新失败: ' + e.message);
@@ -52,9 +52,9 @@ async function addWhitelist() {
   if (!domain) { errorMessage.value = '请填写域名后缀'; return; }
   wlAdding.value = true; errorMessage.value = '';
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/whitelist`, {
+    const res = await apiFetch('/api/admin/whitelist', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ domain_suffix: domain, target: newTarget.value.trim() })
     });
     const data = await res.json();
@@ -68,15 +68,15 @@ async function addWhitelist() {
 async function removeWhitelist(id) {
   if (!confirm('确定删除该白名单条目？')) return;
   try {
-    await fetch(`${baseUrl.value}/api/admin/whitelist/${id}`, { method: 'DELETE', headers: authHeaders() });
+    await apiFetch(`/api/admin/whitelist/${id}`, { method: 'DELETE' });
     await loadWhitelist();
   } catch (e) { errorMessage.value = '删除失败: ' + e.message; }
 }
 
 function saveGlobalTarget() {
-  fetch(`${baseUrl.value}/api/admin/settings`, {
+  apiFetch('/api/admin/settings', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key: 'catchall_target', value: globalTarget.value.trim() })
   }).then(r => r.json()).then(d => { if (!d.ok) errorMessage.value = '更新失败'; })
     .catch(e => errorMessage.value = '更新失败: ' + e.message);
@@ -87,7 +87,7 @@ const siteStats = ref({ days: [], today: 0, limit: 100 });
 
 async function loadSiteStats() {
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/sent/daily?days=30`, { headers: authHeaders() });
+    const res = await apiFetch('/api/admin/sent/daily?days=30');
     const data = await res.json();
     siteStats.value = { days: data.days || [], today: data.today || 0, limit: data.limit || 100 };
   } catch (e) { errorMessage.value = '加载发件统计失败: ' + e.message; }
@@ -102,8 +102,8 @@ const generating = ref(false);
 async function loadAdmin() {
   try {
     const [settingsRes, usersRes] = await Promise.all([
-      fetch(`${baseUrl.value}/api/admin/settings`, { headers: authHeaders() }),
-      fetch(`${baseUrl.value}/api/admin/users`, { headers: authHeaders() })
+      apiFetch('/api/admin/settings'),
+      apiFetch('/api/admin/users')
     ]);
     const sData = await settingsRes.json();
     adminSettings.value = sData.settings || {};
@@ -115,7 +115,7 @@ async function loadAdmin() {
 
 async function loadInvites() {
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/invites`, { headers: authHeaders() });
+    const res = await apiFetch('/api/admin/invites');
     const data = await res.json();
     invites.value = data.invites || [];
   } catch (e) { errorMessage.value = '加载邀请码失败: ' + e.message; }
@@ -124,9 +124,9 @@ async function loadInvites() {
 async function generateInvites() {
   generating.value = true; errorMessage.value = '';
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/invites`, {
+    const res = await apiFetch('/api/admin/invites', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count: inviteCount.value, uses: inviteUses.value })
     });
     const data = await res.json();
@@ -139,7 +139,7 @@ async function generateInvites() {
 async function revokeInvite(id) {
   if (!confirm('确定吊销该邀请码？')) return;
   try {
-    await fetch(`${baseUrl.value}/api/admin/invites/${id}`, { method: 'DELETE', headers: authHeaders() });
+    await apiFetch(`/api/admin/invites/${id}`, { method: 'DELETE' });
     await loadInvites();
   } catch (e) { errorMessage.value = '吊销失败: ' + e.message; }
 }
@@ -147,9 +147,9 @@ async function revokeInvite(id) {
 async function toggleRegistration() {
   const newVal = adminSettings.value.allow_registration === 'true' ? 'false' : 'true';
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/settings`, {
+    const res = await apiFetch('/api/admin/settings', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: 'allow_registration', value: newVal })
     });
     const data = await res.json();
@@ -158,9 +158,9 @@ async function toggleRegistration() {
 }
 
 function updateSetting(key) {
-  fetch(`${baseUrl.value}/api/admin/settings`, {
+  apiFetch('/api/admin/settings', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, value: String(adminSettings.value[key]) })
   }).then(r => r.json()).then(d => { if (!d.ok) errorMessage.value = '更新失败'; })
     .catch(e => errorMessage.value = '更新失败: ' + e.message);
@@ -170,9 +170,9 @@ function updateSetting(key) {
 async function updateUserQuota(user) {
   const limit = parseInt(user.mailbox_limit_input, 10) || user.mailbox_limit;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/users/${user.id}`, {
+    const res = await apiFetch(`/api/admin/users/${user.id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mailbox_limit: limit })
     });
     const data = await res.json();

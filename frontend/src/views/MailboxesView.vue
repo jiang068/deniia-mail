@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import {
-  baseUrl, token, defaultDomain, isAdmin,
+  defaultDomain, isAdmin,
   mailboxes, quota, selectedMailbox, currentMailbox,
-  fetchMailboxes, fetchQuota, refreshIcons, setSelectedMailbox,
+  fetchMailboxes, fetchQuota, refreshIcons, setSelectedMailbox, apiFetch,
 } from '../stores/mail.js';
 
 const errorMessage = ref('');
@@ -29,7 +29,7 @@ async function createRandom() {
   if (atLimit.value) { showError(`邮箱数量已达上限（${quota.value.limit} 个）`); return; }
   creating.value = true; showError('');
   try {
-    const res = await fetch(`${baseUrl.value}/api/generate`, { headers: { Authorization: `Bearer ${token.value}` } });
+    const res = await apiFetch('/api/generate');
     const data = await res.json().catch(() => ({}));
     if (data.email) { setSelectedMailbox(data.email); showNotice(`已创建邮箱 ${data.email}`); await refresh(); }
     else showError(data.error || '生成失败');
@@ -46,9 +46,9 @@ async function createCustom() {
   }
   creating.value = true; showError('');
   try {
-    const res = await fetch(`${baseUrl.value}/api/create`, {
+    const res = await apiFetch('/api/create', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ local: name }),
     });
     const data = await res.json().catch(() => ({}));
@@ -62,9 +62,8 @@ async function removeMailbox(mb) {
   if (!confirm(`确定要删除邮箱 ${mb.address} 吗？该邮箱下的所有邮件将一并删除，且无法恢复。`)) return;
   showError('');
   try {
-    const res = await fetch(`${baseUrl.value}/api/mailbox/${mb.id}`, {
+    const res = await apiFetch(`/api/mailbox/${mb.id}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${token.value}` },
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok && !data.ok) { showError(data.error || '删除失败'); return; }

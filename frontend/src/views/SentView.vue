@@ -1,16 +1,13 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
-import { useRoute } from 'vue-router';
 import {
-  baseUrl, token, currentMailbox, isAuthenticated,
-  mailboxes, selectedMailbox, fetchMailboxes, fetchQuota,
-  formatDate, refreshIcons, buildEmailDocument, setSelectedMailbox,
+  currentMailbox, token, isAuthenticated,
+  selectedMailbox, fetchMailboxes,
+  formatDate, apiFetch, buildEmailDocument,
   remoteContentLevel, hasExternalImagesOf, hasAdvancedTrackersOf,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
 import EmailFrame from '../components/EmailFrame.vue';
-
-const route = useRoute();
 
 const loadingEmails = ref(false);
 const loadingDetail = ref(false);
@@ -24,6 +21,11 @@ const LIST_CACHE_TTL = 10000;
 
 const checkingStatus = ref(false);
 const viewMode = ref('rendered'); // rendered | html | raw
+const nextCursor = ref(null);
+const loadingMore = ref(false);
+let listController = null;
+let detailController = null;
+let listRequestSeq = 0;
 
 const filteredEmails = computed(() => {
   if (!searchQuery.value) return emails.value;
@@ -48,54 +50,69 @@ const hasAdvancedTrackers = computed(() => hasAdvancedTrackersOf(selectedEmail.v
 
 const sentContent = computed(() => {
   remoteContentLevel.value; // 显式依赖：拦截级别变化时重新保护内容
-  const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
+  const raw = selectedEmail.value?.content || selectedEmail.value?.html || selectedEmail.value?.text || '';
   return buildEmailDocument(raw);
 });
 
-function setLevel(l) { remoteContentLevel.value = l; refreshIcons(); }
+function setLevel(l) { remoteContentLevel.value = l; }
 
 async function fetchEmails(force = false) {
   if (!isAuthenticated.value || !currentMailbox.value) return;
   const cacheKey = currentMailbox.value;
   const cached = emailListCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.timestamp < LIST_CACHE_TTL) { emails.value = cached.data; return; }
+  listController?.abort();
+  listController = new AbortController();
+  const requestSeq = ++listRequestSeq;
   loadingEmails.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/sent?from=${encodeURIComponent(currentMailbox.value)}`, {
-      headers: { Authorization: `Bearer ${token.value}` }
-    });
+    const res = await apiFetch(`/api/sent?from=${encodeURIComponent(currentMailbox.value)}`, { signal: listController.signal });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+    if (requestSeq !== listRequestSeq) return;
     const list = (data && data.sent) ? data.sent : [];
     emails.value = list;
+    nextCursor.value = data?.next_cursor || null;
     emailListCache.set(cacheKey, { data: list, timestamp: Date.now() });
-  } catch (e) { console.error('fetch sent error:', e); emails.value = []; }
-  finally { loadingEmails.value = false; await refreshIcons(); }
+  } catch (e) { if (e.name !== 'AbortError') { console.error('fetch sent error:', e); emails.value = []; } }
+  finally { if (requestSeq === listRequestSeq) loadingEmails.value = false; }
 }
 
-async function switchMailbox(address) {
-  setSelectedMailbox(address);
-  selectedEmail.value = null;
-  await fetchEmails();
+async function loadMore() {
+  if (!nextCursor.value || loadingMore.value || !isAuthenticated.value || !currentMailbox.value) return;
+  const requestMailbox = currentMailbox.value;
+  loadingMore.value = true;
+  try {
+    const res = await apiFetch(`/api/sent?from=${encodeURIComponent(requestMailbox)}&cursor=${encodeURIComponent(nextCursor.value)}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (requestMailbox !== currentMailbox.value) return;
+    emails.value = [...emails.value, ...(data?.sent || [])];
+    nextCursor.value = data?.next_cursor || null;
+    emailListCache.set(requestMailbox, { data: emails.value, timestamp: Date.now() });
+  } catch (e) { if (e.name !== 'AbortError') console.error('load more sent error:', e); }
+  finally { loadingMore.value = false; }
 }
 
 async function selectEmail(mail) {
   remoteContentLevel.value = 0;
   const cacheKey = `sent-${mail.id}`;
   const cached = emailDetailCache.get(cacheKey);
-  if (cached) { selectedEmail.value = { ...mail, ...cached }; await refreshIcons(); return; }
+  if (cached) { selectedEmail.value = { ...mail, ...cached }; return; }
   selectedEmail.value = { ...mail };
   loadingDetail.value = true;
+  detailController?.abort();
+  detailController = new AbortController();
   try {
-    const res = await fetch(`${baseUrl.value}/api/sent/${mail.id}`, { headers: { Authorization: `Bearer ${token.value}` } });
+    const res = await apiFetch(`/api/sent/${mail.id}`, { signal: detailController.signal });
     if (res.ok) {
       const data = await res.json();
       const obj = data.sent || {};
       emailDetailCache.set(cacheKey, obj);
       selectedEmail.value = { ...mail, ...obj };
     }
-  } catch (e) { console.error('load sent detail error:', e); }
-  finally { loadingDetail.value = false; await refreshIcons(); }
+  } catch (e) { if (e.name !== 'AbortError') console.error('load sent detail error:', e); }
+  finally { loadingDetail.value = false; }
 }
 
 // 手动查询投递状态（仅在用户点击时调一次 Resend）
@@ -105,8 +122,8 @@ async function queryStatus() {
   try {
     const sentList = (emails.value || []).filter(e => e.delivery_status && e.delivery_status !== 'delivered');
     if (sentList.length === 0) return;
-    const res = await fetch(`${baseUrl.value}/api/emails/check-status`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
+    const res = await apiFetch('/api/emails/check-status', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: sentList.map(e => e.id) })
     });
     if (res.ok) {
@@ -128,13 +145,14 @@ const statusMap = {
   'bounced': ['已退回', 'text-danger bg-danger-soft'],
   'complained': ['被举报', 'text-warn bg-warn-soft'],
   'delayed': ['投递延迟', 'text-warn bg-warn-soft'],
+  'failed': ['发送失败', 'text-danger bg-danger-soft'],
+  'suppressed': ['已抑制', 'text-danger bg-danger-soft'],
   'sent': ['已发送', 'text-sub bg-surface2'],
 };
 function statusCls(s) { const m = statusMap[s] || [s || '', 'text-sub bg-surface2']; return { t: m[0], c: m[1] }; }
 
 onMounted(async () => {
   await fetchMailboxes();
-  await fetchQuota();
   await fetchEmails();
 });
 
@@ -142,7 +160,6 @@ let mailboxPrev = selectedMailbox.value;
 watch(() => selectedMailbox.value, async (nv) => {
   if (nv !== mailboxPrev) { mailboxPrev = nv; await fetchEmails(); }
 });
-watch(() => route.name, () => { fetchEmails(); });
 </script>
 
 <template>
@@ -178,6 +195,10 @@ watch(() => route.name, () => { fetchEmails(); });
             <span :class="['text-xs font-medium shrink-0 px-1.5 py-0.5 rounded', statusCls(mail.delivery_status).c]">{{ statusCls(mail.delivery_status).t }}</span>
           </div>
         </div>
+        <button v-if="nextCursor" @click="loadMore" :disabled="loadingMore"
+          class="w-full py-3 text-xs text-accent hover:bg-surface3 disabled:opacity-50">
+          {{ loadingMore ? '加载中...' : '加载更多' }}
+        </button>
       </div>
     </div>
 

@@ -41,7 +41,7 @@ mail/
 
 1. **后端**：见 [`backend/README.md`](backend/README.md)
    - 配置 `wrangler.toml`（`example.com` → 你的域名、D1 数据库 ID）
-   - 配置 `RESEND_API_KEY`（发件）、`RESEND_WEBHOOK_SECRET`（投递状态回调）
+   - 在 Cloudflare Secret 中配置 `BOOTSTRAP_TOKEN`（首次初始化）、`RESEND_API_KEY`（发件）和可选的 `RESEND_WEBHOOK_SECRET`（投递状态回调）
    - Cloudflare Email Routing 收件 → Worker
    - 用 `schema.sql` + `migrations/` 初始化 D1
 

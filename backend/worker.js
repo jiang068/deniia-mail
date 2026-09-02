@@ -11,27 +11,27 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    // 解析当前请求允许的 CORS 来源（见 resolveCorsOrigin）
-    resolveCorsOrigin(request, env);
+    // CORS 来源必须是请求级变量；不能放在 Worker 模块全局，否则并发请求会互相覆盖。
+    const allowedOrigin = resolveCorsOrigin(request, env);
 
-    if (method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
+    if (method === 'OPTIONS') return cors(new Response(null, { status: 204 }), allowedOrigin);
 
     try {
       // ========== 公开路由 ==========
       if (path === '/api/admin/check' && method === 'GET') {
-        return cors(await handleAdminCheck(env));
+        return cors(await handleAdminCheck(env), allowedOrigin);
       }
       if (path === '/api/admin/setup' && method === 'POST') {
-        return cors(await handleAdminSetup(request, env));
+        return cors(await handleAdminSetup(request, env), allowedOrigin);
       }
       if (path === '/api/register' && method === 'POST') {
-        return cors(await handleRegister(request, env));
+        return cors(await handleRegister(request, env), allowedOrigin);
       }
       if (path === '/api/login' && method === 'POST') {
-        return cors(await handleLogin(request, env));
+        return cors(await handleLogin(request, env), allowedOrigin);
       }
       if (path === '/api/domains' && method === 'GET') {
-        return cors(json({ domains: [env.DOMAIN] }));
+        return cors(json({ domains: [env.DOMAIN] }), allowedOrigin);
       }
 
       // Resend Webhook：由 Resend 后台调用（免用户鉴权，靠 env.RESEND_WEBHOOK_SECRET 签名保护）
@@ -41,19 +41,19 @@ export default {
 
       // ========== 需要认证的路由 ==========
       const user = await authenticate(request, env);
-      if (!user) return cors(json({ error: 'Unauthorized' }, 401));
+      if (!user) return cors(json({ error: 'Unauthorized' }, 401), allowedOrigin);
 
       // -- 管理后台 --
       if (path.startsWith('/api/admin/')) {
-        if (!user.is_admin) return cors(json({ error: 'Forbidden' }, 403));
-        return cors(await handleAdminRoutes(request, env, path, method, url, user));
+        if (!user.is_admin) return cors(json({ error: 'Forbidden' }, 403), allowedOrigin);
+        return cors(await handleAdminRoutes(request, env, path, method, url, user), allowedOrigin);
       }
 
       // -- 前台 API --
-      return cors(await handleUserRoutes(request, env, path, method, url, user));
+      return cors(await handleUserRoutes(request, env, path, method, url, user), allowedOrigin);
     } catch (err) {
       console.error('Unhandled error:', err);
-      return cors(json({ error: 'Internal Server Error' }, 500));
+      return cors(json({ error: 'Internal Server Error' }, 500), allowedOrigin);
     }
   },
 
@@ -103,8 +103,8 @@ export default {
           : rawText;
 
         await env.DB.prepare(
-          `INSERT INTO messages (mailbox_id, sender, to_addrs, subject, preview, raw_content, verification_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO messages (mailbox_id, sender, to_addrs, subject, preview, raw_content, html_content, text_content, verification_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           targetMailbox,
           senderAddr,
@@ -112,6 +112,8 @@ export default {
           subject,
           preview || null,
           safeRaw,
+          parsed.html || null,
+          parsed.text || null,
           null
         ).run();
 
@@ -129,29 +131,29 @@ export default {
       if (!RESEND_API_KEY) return;
 
       const pending = await env.DB.prepare(
-        "SELECT id, resend_id FROM sent_emails WHERE delivery_status IN ('sending', 'sent') AND resend_id IS NOT NULL LIMIT 50"
+        "SELECT id, resend_id, delivery_event_at FROM sent_emails WHERE delivery_status IN ('sending', 'sent', 'delayed') AND resend_id IS NOT NULL LIMIT 50"
       ).all();
 
-      for (const row of (pending.results || [])) {
+      await mapWithConcurrency(pending.results || [], 5, async (row) => {
         try {
-          const res = await fetch(`https://api.resend.com/emails/${row.resend_id}`, {
+          const res = await fetchWithTimeout(`https://api.resend.com/emails/${row.resend_id}`, {
             headers: { 'Authorization': `Bearer ${RESEND_API_KEY}` }
-          });
+          }, 10000);
           if (res.ok) {
             const data = await res.json();
-            let status = 'sent';
-            if (data.last_event === 'delivered') status = 'delivered';
-            else if (data.last_event === 'bounced') status = 'bounced';
-            else if (data.last_event === 'complained') status = 'complained';
+            const status = resendStatus(data.last_event) || 'sent';
 
-            await env.DB.prepare(
-              "UPDATE sent_emails SET delivery_status = ?, last_checked_at = datetime('now') WHERE id = ?"
-            ).bind(status, row.id).run();
+            // 有 webhook 事件时以 webhook 为准，轮询只负责尚未收到 webhook 的记录。
+            if (!row.delivery_event_at) {
+              await env.DB.prepare(
+                "UPDATE sent_emails SET delivery_status = ?, last_checked_at = datetime('now') WHERE id = ? AND delivery_event_at IS NULL"
+              ).bind(status, row.id).run();
+            }
           }
         } catch (err) {
           console.error(`Check delivery failed for email ${row.id}:`, err);
         }
-      }
+      });
     }
   },
 };
@@ -185,20 +187,23 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
   // GET /api/admin/users
   if (path === '/api/admin/users' && method === 'GET') {
     const sort = url.searchParams.get('sort') || 'desc';
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 1), 200);
     const rows = await env.DB.prepare(
       `SELECT u.id, u.username, u.email_address, u.role, u.can_send, u.mailbox_limit, u.created_at,
-              (SELECT COUNT(*) FROM user_mailboxes WHERE user_id = u.id) AS mailbox_count
-       FROM users u ORDER BY u.created_at ${sort === 'asc' ? 'ASC' : 'DESC'}`
-    ).all();
+              COUNT(um.mailbox_id) AS mailbox_count,
+              GROUP_CONCAT(m.address, ',') AS mailbox_addresses
+       FROM users u
+       LEFT JOIN user_mailboxes um ON um.user_id = u.id
+       LEFT JOIN mailboxes m ON m.id = um.mailbox_id
+       GROUP BY u.id
+       ORDER BY u.created_at ${sort === 'asc' ? 'ASC' : 'DESC'} LIMIT ?`
+    ).bind(limit).all();
 
-    // 为每个用户附加其全部邮箱地址（用于管理页展示所有已启用邮箱）
-    const users = [];
-    for (const r of (rows.results || [])) {
-      const mbs = await env.DB.prepare(
-        'SELECT m.address FROM user_mailboxes um JOIN mailboxes m ON m.id = um.mailbox_id WHERE um.user_id = ? ORDER BY m.created_at DESC'
-      ).bind(r.id).all();
-      users.push({ ...r, mailboxes: (mbs.results || []).map(m => m.address) });
-    }
+    const users = (rows.results || []).map(r => ({
+      ...r,
+      mailboxes: r.mailbox_addresses ? String(r.mailbox_addresses).split(',') : [],
+    }));
+    users.forEach(r => { delete r.mailbox_addresses; });
     return json({ users });
   }
 
@@ -256,6 +261,17 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
     const body = await request.json();
     const updates = [];
     const params = [];
+    let protectsLastAdmin = false;
+
+    // 不允许把最后一个管理员降为普通用户；条件放进 UPDATE，
+    // 这样两个并发降权请求也不会把管理员数量降到 0。
+    if (body.role && body.role !== 'admin') {
+      const target = await env.DB.prepare(
+        'SELECT role FROM users WHERE id = ?'
+      ).bind(id).first();
+      if (!target) return json({ error: 'User not found' }, 404);
+      protectsLastAdmin = target.role === 'admin';
+    }
 
     if (body.role) { updates.push('role = ?'); params.push(body.role === 'admin' ? 'admin' : 'user'); }
     if (body.can_send !== undefined) { updates.push('can_send = ?'); params.push(body.can_send ? 1 : 0); }
@@ -267,9 +283,18 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
 
     if (updates.length === 0) return json({ error: 'No fields to update' }, 400);
     params.push(id);
-    await env.DB.prepare(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`
+    const where = protectsLastAdmin
+      ? `WHERE id = ? AND (
+           role != 'admin' OR
+           (SELECT COUNT(*) FROM users WHERE role = 'admin') > 1
+         )`
+      : 'WHERE id = ?';
+    const result = await env.DB.prepare(
+      `UPDATE users SET ${updates.join(', ')} ${where}`
     ).bind(...params).run();
+    if (protectsLastAdmin && Number(result.meta?.changes || 0) !== 1) {
+      return json({ error: 'Cannot remove the last admin' }, 409);
+    }
     return json({ ok: true });
   }
 
@@ -331,9 +356,10 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
 
   // GET /api/admin/invites — 列出所有邀请码及使用情况
   if (path === '/api/admin/invites' && method === 'GET') {
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 1), 500);
     const rows = await env.DB.prepare(
-      'SELECT id, code, max_uses, used_count, created_by, created_at FROM invite_codes ORDER BY created_at DESC'
-    ).all();
+      'SELECT id, code, max_uses, used_count, created_by, created_at FROM invite_codes ORDER BY created_at DESC LIMIT ?'
+    ).bind(limit).all();
     return json({ invites: rows.results || [] });
   }
 
@@ -365,12 +391,18 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
 
   // GET /api/admin/mailboxes — 所有邮箱（含未分配/停用）及归属与邮件数
   if (path === '/api/admin/mailboxes' && method === 'GET') {
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 1), 500);
     const rows = await env.DB.prepare(
       `SELECT m.id, m.address, m.local_part, m.domain, m.can_login, m.is_favorite, m.created_at,
-              (SELECT u.username FROM user_mailboxes um JOIN users u ON u.id = um.user_id WHERE um.mailbox_id = m.id LIMIT 1) AS owner,
-              (SELECT COUNT(*) FROM messages WHERE mailbox_id = m.id) AS msg_count
-       FROM mailboxes m ORDER BY m.created_at DESC`
-    ).all();
+              GROUP_CONCAT(DISTINCT u.username) AS owner,
+              COUNT(DISTINCT msg.id) AS msg_count
+       FROM mailboxes m
+       LEFT JOIN user_mailboxes um ON um.mailbox_id = m.id
+       LEFT JOIN users u ON u.id = um.user_id
+       LEFT JOIN messages msg ON msg.mailbox_id = m.id
+       GROUP BY m.id
+       ORDER BY m.created_at DESC LIMIT ?`
+    ).bind(limit).all();
     return json({ mailboxes: rows.results || [] });
   }
 
@@ -390,16 +422,23 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
   const adminEmail = path.match(/^\/api\/admin\/email\/(\d+)$/);
   if (adminEmail && method === 'GET') {
     const emailId = parseInt(adminEmail[1], 10);
+    const includeRaw = url.searchParams.get('raw') === '1';
     const msg = await env.DB.prepare(
-      'SELECT m.*, mb.address AS mailbox_address FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?'
+      `SELECT m.id, m.mailbox_id, m.sender, m.to_addrs, m.subject, m.preview,
+              m.html_content, m.text_content,
+              CASE WHEN m.html_content IS NULL AND m.text_content IS NULL THEN m.raw_content END AS legacy_raw_content,
+              m.verification_code, m.received_at, m.is_read,
+              ${includeRaw ? 'm.raw_content,' : ''} mb.address AS mailbox_address
+       FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?`
     ).bind(emailId).first();
     if (!msg) return json({ error: 'Not Found' }, 404);
 
-    let htmlContent = null;
-    let textContent = null;
-    if (msg.raw_content) {
+    let htmlContent = msg.html_content || null;
+    let textContent = msg.text_content || null;
+    // 兼容迁移前的旧邮件；新邮件直接使用入库时解析好的正文。
+    if ((!htmlContent && !textContent) && msg.legacy_raw_content) {
       try {
-        const parsed = await PostalMime.parse(msg.raw_content);
+        const parsed = await PostalMime.parse(msg.legacy_raw_content);
         htmlContent = parsed.html || null;
         textContent = parsed.text || null;
       } catch (e) { /* ignore parse errors */ }
@@ -408,7 +447,8 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
       email: {
         ...msg,
         html: htmlContent || (textContent ? `<div style="white-space: pre-wrap;">${textContent}</div>` : msg.preview),
-        text: textContent || msg.preview
+        text: textContent || msg.preview,
+        ...(includeRaw ? { raw_content: msg.raw_content || null } : {}),
       }
     });
   }
@@ -455,7 +495,10 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
   if (adminSentDetail && method === 'GET') {
     const sentId = parseInt(adminSentDetail[1], 10);
     const sent = await env.DB.prepare(
-      `SELECT se.*, u.username AS sender_user FROM sent_emails se LEFT JOIN users u ON u.id = se.user_id WHERE se.id = ?`
+      `SELECT se.id, se.user_id, se.resend_id, se.from_addr, se.to_addrs, se.subject,
+              se.text_content, se.status, se.delivery_status, se.last_checked_at,
+              se.delivery_event_at, se.created_at, se.provider, u.username AS sender_user
+       FROM sent_emails se LEFT JOIN users u ON u.id = se.user_id WHERE se.id = ?`
     ).bind(sentId).first();
     if (!sent) return json({ error: 'Not Found' }, 404);
 
@@ -465,7 +508,8 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
       sent: {
         ...sent,
         html: isHtml ? content : `<div style="white-space: pre-wrap; font-family: sans-serif;">${content}</div>`,
-        text: content
+        text: content,
+        content,
       }
     });
   }
@@ -535,7 +579,55 @@ async function handleAdminRoutes(request, env, path, method, url, user) {
  *  User Routes (Authenticated)
  *  ============================================================ */
 
+async function getUserMailboxes(env, userId) {
+  const rows = await env.DB.prepare(
+    `SELECT m.id, m.address, m.created_at, um.is_pinned, m.is_favorite, m.forward_to,
+            CASE WHEN EXISTS (
+              SELECT 1 FROM messages unread
+              WHERE unread.mailbox_id = m.id AND unread.is_read = 0
+            ) THEN 1 ELSE 0 END AS has_unread
+     FROM user_mailboxes um
+     JOIN mailboxes m ON m.id = um.mailbox_id
+     WHERE um.user_id = ?
+     ORDER BY um.is_pinned DESC, m.created_at DESC`
+  ).bind(userId).all();
+  return rows.results || [];
+}
+
+async function getUserQuota(env, user) {
+  const mbCount = await env.DB.prepare(
+    'SELECT COUNT(*) AS cnt FROM user_mailboxes WHERE user_id = ?'
+  ).bind(user.id).first();
+  const limit = user.mailbox_limit ?? 10;
+  const used = Number(mbCount?.cnt || 0);
+  return { limit, used, remaining: Math.max(0, limit - used) };
+}
+
+async function handleMe(env, user) {
+  const [mailboxes, quota] = await Promise.all([
+    getUserMailboxes(env, user.id),
+    getUserQuota(env, user),
+  ]);
+  return json({
+    user: {
+      id: user.id,
+      username: user.username,
+      email_address: user.email_address,
+      role: user.role,
+      can_send: user.can_send,
+      mailbox_limit: user.mailbox_limit,
+    },
+    mailboxes,
+    quota,
+  });
+}
+
 async function handleUserRoutes(request, env, path, method, url, user) {
+  // 首屏只需一次认证请求即可拿到用户、邮箱与配额，避免路由守卫串行打 3 个接口。
+  if (path === '/api/me' && method === 'GET') {
+    return await handleMe(env, user);
+  }
+
   // ======== 邮件相关 ========
 
   // GET /api/emails?mailbox=xxx
@@ -550,21 +642,43 @@ async function handleUserRoutes(request, env, path, method, url, user) {
       return json({ error: 'Forbidden' }, 403);
     }
 
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '20', 10) || 20, 1), 50);
+    const cursor = decodeCursor(url.searchParams.get('cursor'));
+    const query = cursor
+      ? `SELECT id, sender, to_addrs, subject, preview, received_at, is_read, verification_code
+         FROM messages WHERE mailbox_id = ?
+           AND (received_at < ? OR (received_at = ? AND id < ?))
+         ORDER BY received_at DESC, id DESC LIMIT ?`
+      : `SELECT id, sender, to_addrs, subject, preview, received_at, is_read, verification_code
+         FROM messages WHERE mailbox_id = ?
+         ORDER BY received_at DESC, id DESC LIMIT ?`;
+    const params = cursor
+      ? [mb.id, cursor.timestamp, cursor.timestamp, cursor.id, limit]
+      : [mb.id, limit];
     const rows = await env.DB.prepare(
-      `SELECT id, sender, to_addrs, subject, preview, received_at, is_read, verification_code
-       FROM messages WHERE mailbox_id = ?
-       ORDER BY received_at DESC LIMIT ?`
-    ).bind(mb.id, limit).all();
-    return json({ emails: rows.results || [] });
+      query
+    ).bind(...params).all();
+    const emails = rows.results || [];
+    return json({
+      emails,
+      next_cursor: emails.length === limit
+        ? encodeCursor({ timestamp: emails[emails.length - 1].received_at, id: emails[emails.length - 1].id })
+        : null,
+    });
   }
 
   // GET /api/email/:id
   const emailDetail = path.match(/^\/api\/email\/(\d+)$/);
   if (emailDetail && method === 'GET') {
     const emailId = parseInt(emailDetail[1], 10);
+    const includeRaw = url.searchParams.get('raw') === '1';
     const msg = await env.DB.prepare(
-      'SELECT m.*, mb.address AS mailbox_address FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?'
+      `SELECT m.id, m.mailbox_id, m.sender, m.to_addrs, m.subject, m.preview,
+              m.html_content, m.text_content,
+              CASE WHEN m.html_content IS NULL AND m.text_content IS NULL THEN m.raw_content END AS legacy_raw_content,
+              m.verification_code, m.received_at, m.is_read,
+              ${includeRaw ? 'm.raw_content,' : ''} mb.address AS mailbox_address
+       FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id WHERE m.id = ?`
     ).bind(emailId).first();
     if (!msg) return json({ error: 'Not Found' }, 404);
     if (!(await canAccessMailbox(env, user, msg.mailbox_id))) {
@@ -573,13 +687,13 @@ async function handleUserRoutes(request, env, path, method, url, user) {
 
     await env.DB.prepare('UPDATE messages SET is_read = 1 WHERE id = ?').bind(emailId).run();
 
-    // 在 Edge 端使用 PostalMime 自动将 raw_content 解码为 HTML 和 Plain Text
-    let htmlContent = null;
-    let textContent = null;
+    let htmlContent = msg.html_content || null;
+    let textContent = msg.text_content || null;
 
-    if (msg.raw_content) {
+    // 兼容迁移前的旧邮件；新邮件直接使用入库时解析好的正文。
+    if ((!htmlContent && !textContent) && msg.legacy_raw_content) {
       try {
-        const parsed = await PostalMime.parse(msg.raw_content);
+        const parsed = await PostalMime.parse(msg.legacy_raw_content);
         htmlContent = parsed.html || null;
         textContent = parsed.text || null;
       } catch (e) {
@@ -591,7 +705,8 @@ async function handleUserRoutes(request, env, path, method, url, user) {
       email: {
         ...msg,
         html: htmlContent || (textContent ? `<div style="white-space: pre-wrap;">${textContent}</div>` : msg.preview),
-        text: textContent || msg.preview
+        text: textContent || msg.preview,
+        ...(includeRaw ? { raw_content: msg.raw_content || null } : {}),
       }
     });
   }
@@ -610,7 +725,7 @@ async function handleUserRoutes(request, env, path, method, url, user) {
 
   // POST /api/emails/check-status — 批量查询发件投递状态
   if (path === '/api/emails/check-status' && method === 'POST') {
-    return cors(await handleCheckStatus(request, env, user));
+    return await handleCheckStatus(request, env, user);
   }
 
   // DELETE /api/emails?mailbox=xxx — 清空邮箱
@@ -631,15 +746,7 @@ async function handleUserRoutes(request, env, path, method, url, user) {
 
   // GET /api/mailboxes — 用户自己的邮箱列表
   if (path === '/api/mailboxes' && method === 'GET') {
-    const rows = await env.DB.prepare(
-      `SELECT m.id, m.address, m.created_at, um.is_pinned, m.is_favorite, m.forward_to,
-              CASE WHEN (SELECT COUNT(*) FROM messages WHERE mailbox_id = m.id AND is_read = 0) > 0 THEN 1 ELSE 0 END AS has_unread
-       FROM user_mailboxes um
-       JOIN mailboxes m ON m.id = um.mailbox_id
-       WHERE um.user_id = ?
-       ORDER BY um.is_pinned DESC, m.created_at DESC`
-    ).bind(user.id).all();
-    return json({ mailboxes: rows.results || [] });
+    return json({ mailboxes: await getUserMailboxes(env, user.id) });
   }
 
   // GET /api/mailbox/info?address=xxx
@@ -747,14 +854,7 @@ async function handleUserRoutes(request, env, path, method, url, user) {
 
   // GET /api/user/quota
   if (path === '/api/user/quota' && method === 'GET') {
-    const mbCount = await env.DB.prepare(
-      'SELECT COUNT(*) AS cnt FROM user_mailboxes WHERE user_id = ?'
-    ).bind(user.id).first();
-    return json({
-      limit: user.mailbox_limit ?? 10,
-      used: mbCount?.cnt || 0,
-      remaining: (user.mailbox_limit ?? 10) - (mbCount?.cnt || 0),
-    });
+    return json(await getUserQuota(env, user));
   }
 
   // ======== 发送邮件（Resend 专用） ========
@@ -778,13 +878,29 @@ async function handleUserRoutes(request, env, path, method, url, user) {
     if (!(await canAccessMailbox(env, user, mb.id))) return json({ error: 'Forbidden' }, 403);
 
     // 对于管理员，他们可能需要看所有已发邮件
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '20', 10) || 20, 1), 50);
+    const cursor = decodeCursor(url.searchParams.get('cursor'));
+    const query = cursor
+      ? `SELECT id, resend_id, from_addr, to_addrs, subject, SUBSTR(text_content, 1, 200) AS preview, status, delivery_status, created_at, provider
+         FROM sent_emails WHERE from_addr = ?
+           AND (created_at < ? OR (created_at = ? AND id < ?))
+         ORDER BY created_at DESC, id DESC LIMIT ?`
+      : `SELECT id, resend_id, from_addr, to_addrs, subject, SUBSTR(text_content, 1, 200) AS preview, status, delivery_status, created_at, provider
+         FROM sent_emails WHERE from_addr = ?
+         ORDER BY created_at DESC, id DESC LIMIT ?`;
+    const params = cursor
+      ? [from.toLowerCase(), cursor.timestamp, cursor.timestamp, cursor.id, limit]
+      : [from.toLowerCase(), limit];
     const rows = await env.DB.prepare(
-      `SELECT id, resend_id, from_addr, to_addrs, subject, SUBSTR(text_content, 1, 200) AS preview, status, delivery_status, created_at, provider
-       FROM sent_emails WHERE from_addr = ?
-       ORDER BY created_at DESC LIMIT ?`
-    ).bind(from.toLowerCase(), limit).all();
-    return json({ sent: rows.results || [] });
+      query
+    ).bind(...params).all();
+    const sent = rows.results || [];
+    return json({
+      sent,
+      next_cursor: sent.length === limit
+        ? encodeCursor({ timestamp: sent[sent.length - 1].created_at, id: sent[sent.length - 1].id })
+        : null,
+    });
   }
 
   // GET /api/sent/:id
@@ -792,7 +908,7 @@ async function handleUserRoutes(request, env, path, method, url, user) {
   if (sentDetail && method === 'GET') {
     const sentId = parseInt(sentDetail[1], 10);
     const sent = await env.DB.prepare(
-      `SELECT id, resend_id, from_addr, to_addrs, subject, text_content, status, delivery_status, created_at, provider
+      `SELECT id, resend_id, from_addr, to_addrs, subject, text_content, status, delivery_status, last_checked_at, delivery_event_at, created_at, provider
        FROM sent_emails WHERE id = ?`
     ).bind(sentId).first();
     if (!sent) return json({ error: 'Not Found' }, 404);
@@ -810,7 +926,8 @@ async function handleUserRoutes(request, env, path, method, url, user) {
       sent: {
         ...sent,
         html: isHtml ? content : `<div style="white-space: pre-wrap; font-family: sans-serif;">${content}</div>`,
-        text: content
+        text: content,
+        content,
       }
     });
   }
@@ -882,6 +999,51 @@ async function resolveCatchallTarget(env, senderAddr) {
   return mb ? mb.id : null;
 }
 
+function resendStatus(event) {
+  const map = {
+    'email.sent': 'sent',
+    'email.delivered': 'delivered',
+    'email.bounced': 'bounced',
+    'email.complained': 'complained',
+    'email.delivery_delayed': 'delayed',
+    'email.opened': 'opened',
+    'email.clicked': 'opened',
+    'email.failed': 'failed',
+    'email.suppressed': 'suppressed',
+    // Resend API 查询返回 last_event 时没有 email. 前缀。
+    sent: 'sent',
+    delivered: 'delivered',
+    bounced: 'bounced',
+    complained: 'complained',
+    delivery_delayed: 'delayed',
+    opened: 'opened',
+    clicked: 'opened',
+    failed: 'failed',
+    suppressed: 'suppressed',
+  };
+  return map[event] || null;
+}
+
+function normalizeEventTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 async function handleResendWebhook(request, env) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
@@ -890,12 +1052,11 @@ async function handleResendWebhook(request, env) {
   const rawBody = await request.text();
   if (!rawBody) return new Response('Bad Request', { status: 400 });
 
-  // 若配置了 RESEND_WEBHOOK_SECRET，校验 svix 签名；未配置则公开接收（便于联调）
+  // Webhook 必须配置签名密钥；未配置时拒绝接收，避免留下公开写接口。
   const secret = env.RESEND_WEBHOOK_SECRET;
-  if (secret) {
-    const ok = await verifySvixSignature(request, rawBody, secret);
-    if (!ok) return new Response('Invalid Signature', { status: 401 });
-  }
+  if (!secret) return new Response('Webhook secret not configured', { status: 503 });
+  const ok = await verifySvixSignature(request, rawBody, secret);
+  if (!ok) return new Response('Invalid Signature', { status: 401 });
 
   let payload;
   try {
@@ -909,25 +1070,31 @@ async function handleResendWebhook(request, env) {
     return new Response('Invalid Payload', { status: 400 });
   }
 
-  const STATUS_MAP = {
-    'email.sent': 'sent',
-    'email.delivered': 'delivered',
-    'email.bounced': 'bounced',
-    'email.complained': 'complained',
-    'email.delivery_delayed': 'delayed',
-  };
+  const eventId = request.headers.get('svix-id');
+  const eventTime = normalizeEventTime(data.created_at || payload.created_at);
+  const eventInsert = await env.DB.prepare(
+    'INSERT OR IGNORE INTO webhook_events (event_id, event_type, resend_id, event_at) VALUES (?, ?, ?, ?)'
+  ).bind(eventId, type, data.email_id, eventTime).run();
+  if (Number(eventInsert.meta?.changes || 0) === 0) {
+    return new Response(JSON.stringify({ success: true, duplicate: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
 
-  const newStatus = STATUS_MAP[type];
+  const newStatus = resendStatus(type);
   if (newStatus) {
     await env.DB.prepare(
-      "UPDATE sent_emails SET delivery_status = ?, last_checked_at = datetime('now') WHERE resend_id = ?"
-    ).bind(newStatus, data.email_id).run();
+      `UPDATE sent_emails
+       SET delivery_status = ?, delivery_event_at = ?, last_checked_at = datetime('now')
+       WHERE resend_id = ? AND (delivery_event_at IS NULL OR delivery_event_at <= ?)`
+    ).bind(newStatus, eventTime, data.email_id, eventTime).run();
     console.log(`[Webhook] resend_id ${data.email_id} -> ${newStatus}`);
   }
 
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }
 
@@ -982,7 +1149,9 @@ async function verifySvixSignature(request, rawBody, secret) {
 
 async function handleCheckStatus(request, env, user) {
   const body = await request.json();
-  const ids = body.ids;
+  const ids = [...new Set((Array.isArray(body.ids) ? body.ids : [])
+    .map(Number)
+    .filter(id => Number.isInteger(id) && id > 0))].slice(0, 50);
   if (!Array.isArray(ids) || ids.length === 0) {
     return json({ error: 'ids array required' }, 400);
   }
@@ -992,42 +1161,36 @@ async function handleCheckStatus(request, env, user) {
     return json({ error: 'RESEND_API_KEY not configured' }, 500);
   }
 
-  const results = [];
-  for (const localId of ids) {
+  const results = await mapWithConcurrency(ids, 5, async (localId) => {
     const sent = await env.DB.prepare(
       'SELECT id, resend_id, delivery_status FROM sent_emails WHERE id = ? AND user_id = ?'
     ).bind(localId, user.id).first();
 
     if (!sent || !sent.resend_id) {
-      results.push({ id: localId, delivery_status: sent?.delivery_status || 'unknown' });
-      continue;
+      return { id: localId, delivery_status: sent?.delivery_status || 'unknown' };
     }
 
     try {
-      const res = await fetch(`https://api.resend.com/emails/${sent.resend_id}`, {
+      const res = await fetchWithTimeout(`https://api.resend.com/emails/${sent.resend_id}`, {
         headers: { 'Authorization': `Bearer ${RESEND_API_KEY}` }
-      });
+      }, 10000);
 
       if (res.ok) {
         const emailData = await res.json();
-        let status = 'sent';
-        if (emailData.last_event === 'delivered') status = 'delivered';
-        else if (emailData.last_event === 'bounced') status = 'bounced';
-        else if (emailData.last_event === 'complained') status = 'complained';
-        else if (emailData.last_event === 'opened') status = 'opened';
+        const status = resendStatus(emailData.last_event) || sent.delivery_status || 'sent';
 
         await env.DB.prepare(
           'UPDATE sent_emails SET delivery_status = ?, last_checked_at = datetime(\'now\') WHERE id = ?'
         ).bind(status, localId).run();
 
-        results.push({ id: localId, delivery_status: status });
+        return { id: localId, delivery_status: status };
       } else {
-        results.push({ id: localId, delivery_status: sent.delivery_status });
+        return { id: localId, delivery_status: sent.delivery_status };
       }
     } catch {
-      results.push({ id: localId, delivery_status: sent.delivery_status });
+      return { id: localId, delivery_status: sent.delivery_status };
     }
-  }
+  });
 
   return json({ results });
 }
@@ -1037,10 +1200,17 @@ async function handleCheckStatus(request, env, user) {
  *  ============================================================ */
 
 async function handleAdminCheck(env) {
-  const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE role = ? LIMIT 1'
-  ).bind('admin').first();
-  return json({ admin_exists: !!existing });
+  // 一次查询同时读取初始化状态，避免前端把“无管理员”误判成“全新数据库”。
+  const state = await env.DB.prepare(
+    `SELECT
+       EXISTS (SELECT 1 FROM users WHERE role = 'admin') AS admin_exists,
+       EXISTS (SELECT 1 FROM users) AS initialized`
+  ).first();
+  return json({
+    admin_exists: !!state?.admin_exists,
+    initialized: !!state?.initialized,
+    first_run: !state?.initialized,
+  });
 }
 
 async function handleAdminSetup(request, env) {
@@ -1053,51 +1223,60 @@ async function handleAdminSetup(request, env) {
   }
 
   const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE role = ? LIMIT 1'
-  ).bind('admin').first();
-  if (existing) return json({ error: 'Admin already exists' }, 403);
-
-  // 二次确认防止竞态：存在 sys_setup_in_progress 标记则拒绝
-  const lock = await env.DB.prepare(
-    "SELECT value FROM settings WHERE key = 'setup_in_progress'"
+    'SELECT id FROM users LIMIT 1'
   ).first();
-  if (lock) return json({ error: 'Setup already in progress' }, 409);
+  if (existing) return json({ error: 'System already initialized' }, 403);
 
-  // 先写入锁标记（幂等），再创建管理员
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO settings (key, value) VALUES ('setup_in_progress', '1')"
-  ).run();
-
-  // 再次检查，确保锁生效后仍无 admin
-  const recheck = await env.DB.prepare(
-    'SELECT id FROM users WHERE role = ? LIMIT 1'
-  ).bind('admin').first();
-  if (recheck) {
-    await env.DB.prepare("DELETE FROM settings WHERE key = 'setup_in_progress'").run();
-    return json({ error: 'Admin already exists' }, 403);
+  if (!env.BOOTSTRAP_TOKEN) {
+    return json({ error: 'Bootstrap token is not configured' }, 503);
   }
 
-  const adminUser = 'admin_' + Math.random().toString(36).slice(2, 8);
-  const adminPass = Math.random().toString(36).slice(2, 10) +
-    Math.random().toString(36).slice(2, 10);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid request' }, 400);
+  }
+  if (!body || typeof body !== 'object') {
+    return json({ error: 'Invalid request' }, 400);
+  }
+
+  const setupToken = String(body.setup_token || '').trim();
+  if (!setupToken || !(await timingSafeEqual(setupToken, String(env.BOOTSTRAP_TOKEN)))) {
+    return json({ error: 'Invalid bootstrap token' }, 403);
+  }
+
+  const adminUser = String(body.username || '').trim().toLowerCase();
+  const adminPass = body.password;
+  if (!adminUser || !adminPass) return json({ error: 'Username and password required' }, 400);
+  if (!isValidNickname(adminUser)) {
+    return json({ error: '昵称只能包含英文字母、数字、._-（最长 32 位）' }, 400);
+  }
+  if (typeof adminPass !== 'string' || adminPass.length < 6) {
+    return json({ error: 'Password must be at least 6 characters' }, 400);
+  }
+
   const emailAddress = `${adminUser}@${env.DOMAIN}`.toLowerCase();
   const passwordHash = await hashPassword(adminPass);
 
+  // 与首次注册共用同一条原子条件：注册和 setup 并发时只允许一个成功。
+  let result;
   try {
-    await env.DB.prepare(
-      'INSERT INTO users (username, password_hash, email_address, role, can_send, mailbox_limit) VALUES (?, ?, ?, ?, 1, 999)'
-    ).bind(adminUser, passwordHash, emailAddress, 'admin').run();
+    result = await env.DB.prepare(
+      `INSERT INTO users (username, password_hash, email_address, role, can_send, mailbox_limit)
+       SELECT ?, ?, ?, 'admin', 1, 999
+       WHERE NOT EXISTS (SELECT 1 FROM users)`
+    ).bind(adminUser, passwordHash, emailAddress).run();
   } catch (err) {
-    // 插入失败则释放锁
-    await env.DB.prepare("DELETE FROM settings WHERE key = 'setup_in_progress'").run();
     if (err.message?.includes('UNIQUE')) {
-      return json({ error: 'Admin already exists' }, 409);
+      return json({ error: 'System already initialized' }, 409);
     }
     throw err;
   }
 
-  // 清除锁标记
-  await env.DB.prepare("DELETE FROM settings WHERE key = 'setup_in_progress'").run();
+  if (Number(result.meta?.changes || 0) !== 1) {
+    return json({ error: 'System already initialized' }, 409);
+  }
 
   // 创建默认邮箱
   await env.DB.prepare(
@@ -1106,25 +1285,15 @@ async function handleAdminSetup(request, env) {
 
   const mb = await env.DB.prepare('SELECT id FROM mailboxes WHERE address = ?').bind(emailAddress).first();
   if (mb) {
-    const u = await env.DB.prepare('SELECT id FROM users WHERE username = ?').bind(adminUser).first();
-    if (u) {
-      await env.DB.prepare(
-        'INSERT OR IGNORE INTO user_mailboxes (user_id, mailbox_id) VALUES (?, ?)'
-      ).bind(u.id, mb.id).run();
-    }
+    await env.DB.prepare(
+      'INSERT OR IGNORE INTO user_mailboxes (user_id, mailbox_id) VALUES (?, ?)'
+    ).bind(result.meta.last_row_id, mb.id).run();
   }
 
   return json({ ok: true, username: adminUser, password: adminPass, email: emailAddress }, 201);
 }
 
 async function handleRegister(request, env) {
-  const setting = await env.DB.prepare(
-    "SELECT value FROM settings WHERE key = 'allow_registration'"
-  ).first();
-  if (setting?.value !== 'true') {
-    return json({ error: 'Registration is closed' }, 403);
-  }
-
   const { username, password, invite } = await request.json();
   if (!username || !password) return json({ error: 'Username and password required' }, 400);
   if (password.length < 6) return json({ error: 'Password must be at least 6 characters' }, 400);
@@ -1135,33 +1304,56 @@ async function handleRegister(request, env) {
     return json({ error: '昵称只能包含英文字母、数字、._-（最长 32 位）' }, 400);
   }
 
-  // 凭邀请码注册：无码或码无效/用尽一律拒绝
+  const emailAddress = `${cleanUser}@${env.DOMAIN}`.toLowerCase();
+  const initialized = await env.DB.prepare(
+    'SELECT id FROM users LIMIT 1'
+  ).first();
+  if (!initialized) {
+    return json({ error: 'Initial admin setup required', setup_required: true }, 403);
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  const setting = await env.DB.prepare(
+    "SELECT value FROM settings WHERE key = 'allow_registration'"
+  ).first();
+  if (setting?.value !== 'true') {
+    return json({ error: 'Registration is closed' }, 403);
+  }
+
+  // 用一次 D1 batch 原子地“占用邀请码 + 创建用户”。UPDATE 只会成功一次，
+  // 后续 INSERT 通过 changes() 确认本次占用确实成功，避免并发超用。
   const invCode = String(invite || '').trim().toUpperCase();
   if (!invCode) {
     return json({ error: '注册需要邀请码' }, 400);
   }
-  const inviteRow = await env.DB.prepare(
-    'SELECT id, max_uses, used_count FROM invite_codes WHERE code = ?'
-  ).bind(invCode).first();
-  if (!inviteRow || inviteRow.used_count >= inviteRow.max_uses) {
-    return json({ error: '邀请码无效或已被使用完' }, 403);
+
+  let userId;
+  let results;
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(
+        'UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ? AND used_count < max_uses'
+      ).bind(invCode),
+      env.DB.prepare(
+        `INSERT INTO users (username, password_hash, email_address, role, can_send, mailbox_limit)
+         SELECT ?, ?, ?, 'user', 1, 10
+         FROM invite_codes
+         WHERE code = ? AND changes() = 1`
+      ).bind(cleanUser, passwordHash, emailAddress, invCode),
+    ]);
+  } catch (err) {
+    if (err.message?.includes('UNIQUE')) return json({ error: 'Username already exists' }, 409);
+    throw err;
   }
 
-  const emailAddress = `${cleanUser}@${env.DOMAIN}`.toLowerCase();
-  const passwordHash = await hashPassword(password);
+  const insertResult = results[1];
+  if (Number(insertResult?.meta?.changes || 0) !== 1) {
+    return json({ error: '邀请码无效或已被使用完' }, 403);
+  }
+  userId = insertResult.meta.last_row_id;
 
   try {
-    const result = await env.DB.prepare(
-      'INSERT INTO users (username, password_hash, email_address, role, can_send, mailbox_limit) VALUES (?, ?, ?, ?, 1, 10)'
-    ).bind(cleanUser, passwordHash, emailAddress, 'user').run();
-
-    // 创建成功后消费一个邀请码名额
-    await env.DB.prepare(
-      'UPDATE invite_codes SET used_count = used_count + 1 WHERE id = ?'
-    ).bind(inviteRow.id).run();
-
-    const userId = result.meta.last_row_id;
-
     // 创建默认邮箱并关联
     await env.DB.prepare(
       'INSERT OR IGNORE INTO mailboxes (address, local_part, domain, can_login) VALUES (?, ?, ?, 1)'
@@ -1174,7 +1366,7 @@ async function handleRegister(request, env) {
       ).bind(userId, mb.id).run();
     }
 
-    return json({ ok: true, email: emailAddress }, 201);
+    return json({ ok: true, email: emailAddress, admin: false }, 201);
   } catch (err) {
     if (err.message?.includes('UNIQUE')) return json({ error: 'Username already exists' }, 409);
     throw err;
@@ -1203,7 +1395,7 @@ async function handleLogin(request, env) {
   }
 
   const user = await env.DB.prepare(
-    'SELECT id, password_hash, role, can_send, mailbox_limit FROM users WHERE username = ?'
+    'SELECT id, username, email_address, password_hash, role, can_send, mailbox_limit FROM users WHERE username = ?'
   ).bind(cleanUser).first();
 
   if (!user) return json({ error: 'Invalid credentials' }, 401);
@@ -1222,6 +1414,8 @@ async function handleLogin(request, env) {
   return json({
     ok: true,
     token,
+    username: user.username,
+    email_address: user.email_address,
     role: user.role,
     can_send: user.can_send,
     mailbox_limit: user.mailbox_limit,
@@ -1309,14 +1503,14 @@ async function handleSend(request, user, env) {
     if (html) payload.html = html;
     else payload.text = text;
 
-    const res = await fetch('https://api.resend.com/emails', {
+    const res = await fetchWithTimeout('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+    }, 15000);
 
     const data = await res.json();
     if (!res.ok) {
@@ -1349,13 +1543,46 @@ async function handleSend(request, user, env) {
  *  Utils
  *  ============================================================ */
 
+async function fetchWithTimeout(resource, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  const externalSignal = options.signal;
+  let onAbort;
+  if (externalSignal) {
+    onAbort = () => controller.abort(externalSignal.reason || 'aborted');
+    if (externalSignal.aborted) onAbort();
+    else externalSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    return await fetch(resource, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal && onAbort) externalSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+function encodeCursor(value) {
+  return btoa(JSON.stringify(value));
+}
+
+function decodeCursor(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(atob(value));
+    if (!parsed || typeof parsed.timestamp !== 'string' || !Number.isInteger(Number(parsed.id))) return null;
+    return { timestamp: parsed.timestamp, id: Number(parsed.id) };
+  } catch {
+    return null;
+  }
+}
+
 async function authenticate(request, env) {
   const auth = request.headers.get('Authorization');
   if (!auth?.startsWith('Bearer ')) return null;
 
   const token = auth.slice(7);
   const row = await env.DB.prepare(
-    `SELECT u.id, u.role, u.can_send, u.mailbox_limit
+    `SELECT u.id, u.username, u.email_address, u.role, u.can_send, u.mailbox_limit
      FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token = ?`
   ).bind(token).first();
@@ -1363,6 +1590,8 @@ async function authenticate(request, env) {
   if (!row) return null;
   return {
     id: row.id,
+    username: row.username,
+    email_address: row.email_address,
     is_admin: row.role === 'admin',
     role: row.role,
     can_send: row.can_send,
@@ -1381,6 +1610,22 @@ async function canAccessMailbox(env, user, mailboxId) {
 async function sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 比较初始化密钥时避免直接比较可观察的前缀差异。
+async function timingSafeEqual(a, b) {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(String(a))),
+    crypto.subtle.digest('SHA-256', encoder.encode(String(b))),
+  ]);
+  const leftBytes = new Uint8Array(left);
+  const rightBytes = new Uint8Array(right);
+  let diff = leftBytes.length ^ rightBytes.length;
+  for (let i = 0; i < Math.max(leftBytes.length, rightBytes.length); i++) {
+    diff |= (leftBytes[i] || 0) ^ (rightBytes[i] || 0);
+  }
+  return diff === 0;
 }
 
 /* ============================================================
@@ -1474,19 +1719,18 @@ function isValidNickname(name) {
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+    },
   });
 }
-
-// 当前请求匹配到的来源（由 resolveCorsOrigin 设置）
-let currentAllowedOrigin = '*';
 
 function resolveCorsOrigin(request, env) {
   // 默认：未配置 ALLOWED_ORIGINS 时保持全开（向后兼容）
   const allowedRaw = env.ALLOWED_ORIGINS;
   if (!allowedRaw) {
-    currentAllowedOrigin = '*';
-    return;
+    return '*';
   }
 
   const allowedSet = new Set(
@@ -1496,26 +1740,25 @@ function resolveCorsOrigin(request, env) {
 
   // 匹配则回显该来源
   if (allowedSet.has(origin)) {
-    currentAllowedOrigin = origin;
-    return;
+    return origin;
   }
   // 未匹配的跨域请求：不返回 CORS 头（浏览器会拦截）
-  currentAllowedOrigin = 'null';
+  return 'null';
 }
 
-function cors(response) {
+function cors(response, allowedOrigin = '*') {
   const headers = new Headers(response.headers);
-  if (currentAllowedOrigin === 'null') {
+  if (allowedOrigin === 'null') {
     // 不放行跨域
     return new Response(response.body, { status: response.status, headers });
   }
-  headers.set('Access-Control-Allow-Origin', currentAllowedOrigin);
+  headers.set('Access-Control-Allow-Origin', allowedOrigin);
   headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   // 预检缓存 24h：跨源 + Authorization 必触发 OPTIONS，缓存后浏览器不再对每个请求预检，
   // 直接消灭日志里成堆的 204(几秒级延迟)。跨源配置时常变，留 24h 平衡灵活性与性能。
   headers.set('Access-Control-Max-Age', '86400');
-  if (currentAllowedOrigin !== '*') {
+  if (allowedOrigin !== '*') {
     headers.set('Vary', 'Origin');
     headers.set('Access-Control-Allow-Credentials', 'false');
   }

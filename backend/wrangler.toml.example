@@ -2,6 +2,9 @@ name = "webmail-backend"
 main = "worker.js"
 compatibility_date = "2025-04-01"
 
+[triggers]
+crons = ["*/5 * * * *"]
+
 # D1 数据库绑定
 # 创建数据库: npx wrangler d1 create mail-db
 # 然后把输出的 id 填到下面
@@ -13,3 +16,9 @@ database_id = "<your-database-id>"
 # 环境变量
 [vars]
 DOMAIN = "yourdomain.com"
+
+# Secret 不写入此文件。部署后在 Cloudflare Dashboard 的
+# Workers & Pages → Settings → Variables and Secrets 中配置：
+# BOOTSTRAP_TOKEN       首次网页初始化管理员（必需）
+# RESEND_API_KEY        发件（必需）
+# RESEND_WEBHOOK_SECRET 投递状态签名（可选）

@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import {
-  baseUrl, currentMailbox, isAuthenticated,
+  currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, quota, fetchMailboxes, fetchQuota,
-  switchMailbox, refreshIcons, clearAuth, token, buildEmailDocument,
+  switchMailbox, refreshIcons, clearAuth, apiFetch, buildEmailDocument,
 } from '../stores/mail.js';
 import { useRouter } from 'vue-router';
 import { isMobile } from '../composables/mobileShell.js';
@@ -45,9 +45,7 @@ async function applyQueryHints() {
   if (forwardId) {
     editMode.value = 'forward';
     try {
-      const res = await fetch(`${baseUrl.value}/api/email/${forwardId}`, {
-        headers: { Authorization: `Bearer ${token.value}` }
-      });
+      const res = await apiFetch(`/api/email/${forwardId}`);
       if (res.ok) {
         const data = await res.json();
         const mail = data.email || {};
@@ -87,9 +85,9 @@ async function sendEmail() {
       text: composerForm.value.body,
       html: composerEditMode.value === 'html' ? composerForm.value.html : undefined
     };
-    const res = await fetch(`${baseUrl.value}/api/send`, {
+    const res = await apiFetch('/api/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await res.json().catch(() => ({}));

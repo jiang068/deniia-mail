@@ -1,11 +1,10 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import {
-  baseUrl, token, currentMailbox, isAuthenticated,
+  currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, fetchMailboxes,
-  formatDate, refreshIcons,
+  formatDate, apiFetch,
   remoteContentLevel, buildEmailDocument, hasExternalImagesOf, hasAdvancedTrackersOf,
-  setSelectedMailbox,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
 import EmailFrame from '../components/EmailFrame.vue';
@@ -17,6 +16,12 @@ const emails = ref([]);
 const searchQuery = ref('');
 const selectedEmail = ref(null);
 const viewMode = ref('rendered');
+const nextCursor = ref(null);
+const loadingMore = ref(false);
+const loadingRaw = ref(false);
+let listController = null;
+let detailController = null;
+let listRequestSeq = 0;
 
 // 缓存
 const emailDetailCache = new Map();
@@ -57,21 +62,41 @@ async function fetchEmails(force = false) {
   const cacheKey = currentMailbox.value;
   const cached = emailListCache.get(cacheKey);
   if (!force && cached && Date.now() - cached.timestamp < LIST_CACHE_TTL) { emails.value = cached.data; return; }
+  listController?.abort();
+  listController = new AbortController();
+  const requestSeq = ++listRequestSeq;
   loadingEmails.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/emails?mailbox=${encodeURIComponent(currentMailbox.value)}`, {
-      headers: { Authorization: `Bearer ${token.value}` }
-    });
+    const res = await apiFetch(`/api/emails?mailbox=${encodeURIComponent(currentMailbox.value)}`, { signal: listController.signal });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+    if (requestSeq !== listRequestSeq) return;
     const list = (data && data.emails) ? data.emails : [];
     emails.value = list;
+    nextCursor.value = data?.next_cursor || null;
     emailListCache.set(cacheKey, { data: list, timestamp: Date.now() });
   } catch (e) {
+    if (e.name === 'AbortError') return;
     console.error('fetch emails error:', e);
     errorMessage.value = '获取邮件失败: ' + e.message;
     emails.value = [];
-  } finally { loadingEmails.value = false; await refreshIcons(); }
+  } finally { if (requestSeq === listRequestSeq) loadingEmails.value = false; }
+}
+
+async function loadMore() {
+  if (!nextCursor.value || loadingMore.value || !isAuthenticated.value || !currentMailbox.value) return;
+  const requestMailbox = currentMailbox.value;
+  loadingMore.value = true;
+  try {
+    const res = await apiFetch(`/api/emails?mailbox=${encodeURIComponent(requestMailbox)}&cursor=${encodeURIComponent(nextCursor.value)}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (requestMailbox !== currentMailbox.value) return;
+    emails.value = [...emails.value, ...(data?.emails || [])];
+    nextCursor.value = data?.next_cursor || null;
+    emailListCache.set(requestMailbox, { data: emails.value, timestamp: Date.now() });
+  } catch (e) { if (e.name !== 'AbortError') console.error('load more emails error:', e); }
+  finally { loadingMore.value = false; }
 }
 
 async function selectEmail(mail) {
@@ -81,33 +106,44 @@ async function selectEmail(mail) {
   if (cached) {
     selectedEmail.value = { ...mail, ...cached };
     viewMode.value = 'rendered';
-    await refreshIcons(); return;
+    return;
   }
   selectedEmail.value = { ...mail };
   viewMode.value = 'rendered';
   loadingDetail.value = true;
+  detailController?.abort();
+  detailController = new AbortController();
   try {
-    const res = await fetch(`${baseUrl.value}/api/email/${mail.id}`, { headers: { Authorization: `Bearer ${token.value}` } });
+    const res = await apiFetch(`/api/email/${mail.id}`, { signal: detailController.signal });
     if (res.ok) {
       const data = await res.json();
       const obj = data.email || {};
       emailDetailCache.set(cacheKey, obj);
       selectedEmail.value = { ...mail, ...obj };
     }
-  } catch (e) { console.error('load detail error:', e); }
-  finally { loadingDetail.value = false; await refreshIcons(); }
+  } catch (e) { if (e.name !== 'AbortError') console.error('load detail error:', e); }
+  finally { loadingDetail.value = false; }
 }
 
-async function switchMailbox(address) {
-  setSelectedMailbox(address);
-  selectedEmail.value = null;
-  await fetchEmails();
+async function setViewMode(mode) {
+  viewMode.value = mode;
+  if (mode !== 'raw' || !selectedEmail.value || selectedEmail.value.raw_content !== undefined || loadingRaw.value) return;
+  loadingRaw.value = true;
+  try {
+    const res = await apiFetch(`/api/email/${selectedEmail.value.id}?raw=1`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const obj = data.email || {};
+    emailDetailCache.set(`email-${selectedEmail.value.id}`, obj);
+    selectedEmail.value = { ...selectedEmail.value, ...obj };
+  } catch (e) { console.error('load raw email error:', e); }
+  finally { loadingRaw.value = false; }
 }
 
 async function deleteEmail(id) {
   if (!confirm('确定要删除这封邮件吗？')) return;
   try {
-    const res = await fetch(`${baseUrl.value}/api/email/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token.value}` } });
+    const res = await apiFetch(`/api/email/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('删除失败');
     emailDetailCache.delete(`email-${id}`);
     emailListCache.delete(currentMailbox.value);
@@ -116,7 +152,7 @@ async function deleteEmail(id) {
   } catch (err) { errorMessage.value = '删除失败: ' + err.message; }
 }
 
-function setLevel(l) { remoteContentLevel.value = l; refreshIcons(); }
+function setLevel(l) { remoteContentLevel.value = l; }
 
 // 挂载：拉取列表
 onMounted(async () => {
@@ -131,6 +167,8 @@ const statusMap = {
   'bounced': ['已退回', 'text-danger bg-danger-soft'],
   'complained': ['被举报', 'text-warn bg-warn-soft'],
   'delayed': ['投递延迟', 'text-warn bg-warn-soft'],
+  'failed': ['发送失败', 'text-danger bg-danger-soft'],
+  'suppressed': ['已抑制', 'text-danger bg-danger-soft'],
   'sent': ['已发送', 'text-sub bg-surface2'],
 };
 function statusCls(s, detail = false) {
@@ -174,6 +212,10 @@ watch(() => selectedMailbox.value, async (nv) => {
               :class="['text-xs font-medium shrink-0 px-1.5 py-0.5 rounded', statusCls(mail.delivery_status).c]">{{ statusCls(mail.delivery_status).t }}</span>
           </div>
         </div>
+        <button v-if="nextCursor" @click="loadMore" :disabled="loadingMore"
+          class="w-full py-3 text-xs text-accent hover:bg-surface3 disabled:opacity-50">
+          {{ loadingMore ? '加载中...' : '加载更多' }}
+        </button>
       </div>
     </div>
 
@@ -200,11 +242,11 @@ watch(() => selectedMailbox.value, async (nv) => {
             </button>
           </div>
           <div class="flex bg-surface2 p-1 rounded-lg text-xs">
-            <button @click="viewMode='rendered'"
+              <button @click="setViewMode('rendered')"
               :class="['px-3 py-1 rounded-md font-medium', viewMode==='rendered' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">视图</button>
-            <button @click="viewMode='html'"
+            <button @click="setViewMode('html')"
               :class="['px-3 py-1 rounded-md font-medium', viewMode==='html' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">HTML</button>
-            <button @click="viewMode='raw'"
+            <button @click="setViewMode('raw')"
               :class="['px-3 py-1 rounded-md font-medium', viewMode==='raw' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">原始</button>
           </div>
         </div>
@@ -248,6 +290,7 @@ watch(() => selectedMailbox.value, async (nv) => {
           <template v-else>
             <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
             <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
+            <div v-else-if="viewMode==='raw' && loadingRaw" class="text-sm text-faint py-4">加载原始邮件...</div>
             <pre v-else-if="viewMode==='raw'" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.raw_content || '无 RAW 内容' }}</pre>
           </template>
         </div>

@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import {
-  baseUrl, isAdmin, authHeaders, refreshIcons,
+  isAdmin, apiFetch,
   formatDate, buildEmailDocument, remoteContentLevel,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
@@ -23,6 +23,7 @@ const sentEmails = ref([]);
 
 const selectedEmail = ref(null);
 const viewMode = ref('rendered'); // rendered | html | raw
+const loadingRaw = ref(false);
 
 const DELIVERY_LABELS = {
   sending: '发送中', sent: '已发送', delivered: '已送达',
@@ -63,6 +64,19 @@ function resetSelection() {
   viewMode.value = 'rendered';
 }
 
+async function setViewMode(mode) {
+  viewMode.value = mode;
+  if (mode !== 'raw' || tab.value !== 'inbox' || !selectedEmail.value || selectedEmail.value.raw_content !== undefined || loadingRaw.value) return;
+  loadingRaw.value = true;
+  try {
+    const res = await apiFetch(`/api/admin/email/${selectedEmail.value.id}?raw=1`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    selectedEmail.value = { ...selectedEmail.value, ...(data.email || {}) };
+  } catch (e) { errorMessage.value = '加载原始邮件失败: ' + e.message; }
+  finally { loadingRaw.value = false; }
+}
+
 async function switchTab(t) {
   resetSelection();
   tab.value = t;
@@ -76,21 +90,21 @@ async function switchTab(t) {
 async function loadMailboxes() {
   loadingMailboxes.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/mailboxes`, { headers: authHeaders() });
+    const res = await apiFetch('/api/admin/mailboxes');
     const data = await res.json();
     mailboxes.value = data.mailboxes || [];
   } catch (e) { errorMessage.value = '加载邮箱失败: ' + e.message; }
-  finally { loadingMailboxes.value = false; await refreshIcons(); }
+  finally { loadingMailboxes.value = false; }
 }
 
 async function loadSent() {
   loadingEmails.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/sent`, { headers: authHeaders() });
+    const res = await apiFetch('/api/admin/sent');
     const data = await res.json();
     sentEmails.value = data.sent || [];
   } catch (e) { errorMessage.value = '加载发件箱失败: ' + e.message; }
-  finally { loadingEmails.value = false; await refreshIcons(); }
+  finally { loadingEmails.value = false; }
 }
 
 async function openMailbox(mb) {
@@ -98,11 +112,11 @@ async function openMailbox(mb) {
   resetSelection();
   loadingEmails.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/mailboxes/${mb.id}/emails`, { headers: authHeaders() });
+    const res = await apiFetch(`/api/admin/mailboxes/${mb.id}/emails`);
     const data = await res.json();
     emails.value = data.emails || [];
   } catch (e) { errorMessage.value = '加载邮件失败: ' + e.message; emails.value = []; }
-  finally { loadingEmails.value = false; await refreshIcons(); }
+  finally { loadingEmails.value = false; }
 }
 
 async function openEmail(mail) {
@@ -110,7 +124,7 @@ async function openEmail(mail) {
   viewMode.value = 'rendered';
   loadingDetail.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/email/${mail.id}`, { headers: authHeaders() });
+    const res = await apiFetch(`/api/admin/email/${mail.id}`);
     if (res.ok) {
       const data = await res.json();
       selectedEmail.value = { ...mail, ...(data.email || {}) };
@@ -119,7 +133,7 @@ async function openEmail(mail) {
       errorMessage.value = data.error || '加载邮件详情失败';
     }
   } catch (e) { errorMessage.value = '加载详情失败: ' + e.message; }
-  finally { loadingDetail.value = false; await refreshIcons(); }
+  finally { loadingDetail.value = false; }
 }
 
 async function openSentEmail(sent) {
@@ -127,7 +141,7 @@ async function openSentEmail(sent) {
   viewMode.value = 'rendered';
   loadingDetail.value = true;
   try {
-    const res = await fetch(`${baseUrl.value}/api/admin/sent/${sent.id}`, { headers: authHeaders() });
+    const res = await apiFetch(`/api/admin/sent/${sent.id}`);
     if (res.ok) {
       const data = await res.json();
       selectedEmail.value = { ...sent, ...(data.sent || {}) };
@@ -136,7 +150,7 @@ async function openSentEmail(sent) {
       errorMessage.value = data.error || '加载发件详情失败';
     }
   } catch (e) { errorMessage.value = '加载详情失败: ' + e.message; }
-  finally { loadingDetail.value = false; await refreshIcons(); }
+  finally { loadingDetail.value = false; }
 }
 
 function backToMailboxes() { selectedMailbox.value = null; selectedEmail.value = null; }
@@ -228,9 +242,9 @@ if (isAdmin.value) loadMailboxes();
             <h2 class="text-base font-bold text-main truncate">{{ selectedEmail.subject }}</h2>
           </div>
           <div class="flex bg-surface2 p-1 rounded-lg text-xs shrink-0">
-            <button @click="viewMode='rendered'" :class="['px-3 py-1 rounded-md font-medium', viewMode==='rendered' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">视图</button>
-            <button @click="viewMode='html'" :class="['px-3 py-1 rounded-md font-medium', viewMode==='html' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">HTML</button>
-            <button @click="viewMode='raw'" :class="['px-3 py-1 rounded-md font-medium', viewMode==='raw' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">源码</button>
+            <button @click="setViewMode('rendered')" :class="['px-3 py-1 rounded-md font-medium', viewMode==='rendered' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">视图</button>
+            <button @click="setViewMode('html')" :class="['px-3 py-1 rounded-md font-medium', viewMode==='html' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">HTML</button>
+            <button @click="setViewMode('raw')" :class="['px-3 py-1 rounded-md font-medium', viewMode==='raw' ? 'bg-accent text-accent-ink shadow' : 'text-sub']">源码</button>
           </div>
         </div>
         <div class="p-4 border-b border-line space-y-1 text-xs text-sub">
@@ -253,7 +267,8 @@ if (isAdmin.value) loadMailboxes();
           <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
           <div v-else-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
           <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
-          <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.raw_content || '无源码内容' }}</pre>
+          <div v-else-if="viewMode==='raw' && loadingRaw" class="text-sm text-faint py-4">加载原始邮件...</div>
+          <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ tab==='sent' ? (selectedEmail.content || selectedEmail.text || '无正文') : (selectedEmail.raw_content || '无 RAW 内容') }}</pre>
         </div>
       </template>
       <div v-else class="flex-1 flex items-center justify-center text-faint flex-col space-y-2">

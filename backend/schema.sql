@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS messages (
     subject         TEXT    NOT NULL DEFAULT '(No Subject)',
     preview         TEXT,
     raw_content     TEXT,
+    html_content    TEXT,
+    text_content    TEXT,
     verification_code TEXT,
     received_at     TEXT    DEFAULT (datetime('now')),
     is_read         INTEGER DEFAULT 0,
@@ -75,6 +77,7 @@ CREATE TABLE IF NOT EXISTS sent_emails (
     status          TEXT    DEFAULT 'sent',
     delivery_status TEXT    DEFAULT 'sending',
     last_checked_at TEXT,
+    delivery_event_at TEXT,
     created_at      TEXT    DEFAULT (datetime('now')),
     provider        TEXT    NOT NULL DEFAULT 'resend',
     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -94,11 +97,23 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_send_limit', '50');
 
 CREATE INDEX IF NOT EXISTS idx_mailboxes_address ON mailboxes(address);
 CREATE INDEX IF NOT EXISTS idx_messages_mailbox_received ON messages(mailbox_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_mailbox_read ON messages(mailbox_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_messages_mailbox_received_id ON messages(mailbox_id, received_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_user_mailboxes_user ON user_mailboxes(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_mailboxes_mailbox ON user_mailboxes(mailbox_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_user_date ON sent_emails(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_from ON sent_emails(from_addr);
+CREATE INDEX IF NOT EXISTS idx_sent_emails_from_date ON sent_emails(from_addr, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sent_emails_status_date ON sent_emails(delivery_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_resend ON sent_emails(resend_id);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+    event_id    TEXT PRIMARY KEY,
+    event_type  TEXT NOT NULL,
+    resend_id   TEXT,
+    event_at    TEXT NOT NULL,
+    received_at TEXT DEFAULT (datetime('now'))
+);

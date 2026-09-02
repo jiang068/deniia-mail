@@ -6,6 +6,19 @@
 // ============================================================
 import { ref, computed, nextTick } from 'vue';
 import DOMPurify from 'dompurify';
+import {
+    createIcons, AlertTriangle, BarChart3, Calendar, CheckCircle2, ChevronLeft,
+    Feather, Filter, Forward, Gift, Globe, Inbox, List, LogOut, Mail, MailCheck,
+    MailOpen, Menu, Palette, RefreshCw, Reply, Search, Send, Settings, Shield,
+    ShieldAlert, ShieldX, Shuffle, SquarePen, SquarePlus, Trash2, Users,
+} from 'lucide';
+
+const iconSet = {
+    AlertTriangle, BarChart3, Calendar, CheckCircle2, ChevronLeft, Feather, Filter,
+    Forward, Gift, Globe, Inbox, List, LogOut, Mail, MailCheck, MailOpen, Menu,
+    Palette, RefreshCw, Reply, Search, Send, Settings, Shield, ShieldAlert, ShieldX,
+    Shuffle, SquarePen, SquarePlus, Trash2, Users,
+};
 
 // ---------- 主题系统 ----------
 const THEME_KEY = 'deniia_theme';          // 'light' | 'dark'
@@ -93,13 +106,24 @@ let lastAuthOkAt = 0;
 const AUTH_TTL = 60 * 1000;
 let configCacheAt = 0;
 const CONFIG_TTL = 5 * 60 * 1000;
+let configRequest = null;
+let authRequest = null;
+let mailboxesRequest = null;
+let quotaRequest = null;
+const API_TIMEOUT = 15000;
 
 async function loadConfig(force = false) {
     if (!force && baseUrl.value && configCacheAt && Date.now() - configCacheAt < CONFIG_TTL) {
         return true;
     }
-    try {
-        let res = await fetch('config.json');
+    if (configRequest) return configRequest;
+    configRequest = (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        let res;
+        try { res = await fetch('config.json', { signal: controller.signal, cache: 'no-store' }); }
+        finally { clearTimeout(timer); }
         if (!res.ok) throw new Error('未找到 config.json 配置文件');
         const cfg = await res.json();
         let url = (cfg.baseUrl || '').trim();
@@ -112,12 +136,16 @@ async function loadConfig(force = false) {
         configCacheAt = Date.now();
         configError.value = false;
         return true;
-    } catch (err) {
+      } catch (err) {
         console.error('config error:', err);
         configError.value = true;
         configErrorMessage.value = err.message;
         return false;
-    }
+      } finally {
+        configRequest = null;
+      }
+    })();
+    return configRequest;
 }
 
 function authHeaders() {
@@ -127,21 +155,48 @@ function jsonHeaders(extra = {}) {
     return { 'Content-Type': 'application/json', ...authHeaders(), ...extra };
 }
 
+async function apiFetch(path, options = {}) {
+    const { auth = true, timeout = API_TIMEOUT, signal: externalSignal, ...init } = options;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('timeout'), timeout);
+    let onAbort;
+    if (externalSignal) {
+        onAbort = () => controller.abort(externalSignal.reason || 'aborted');
+        if (externalSignal.aborted) onAbort();
+        else externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
+    const headers = new Headers(init.headers || {});
+    if (auth && token.value) headers.set('Authorization', `Bearer ${token.value}`);
+    try {
+        return await fetch(`${baseUrl.value}${path}`, { ...init, headers, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+        if (externalSignal && onAbort) externalSignal.removeEventListener('abort', onAbort);
+    }
+}
+
 function clearAuth() {
     token.value = '';
     currentUser.value = '';
     isAdmin.value = false;
     isAuthenticated.value = false;
     lastAuthOkAt = 0;
+    mailboxes.value = [];
+    quota.value = { limit: 3, used: 0, remaining: 3 };
+    mailboxesAt = 0;
+    quotaAt = 0;
+    setSelectedMailbox('');
     storeRemove('cf_mail_token');
     storeRemove('cf_mail_user');
 }
 
 // 校验登录态；返回是否已登录。SPA 中未登录由路由守卫重定向到 /login。
-async function ensureAuth() {
-    if (isAuthenticated.value === true && token.value && Date.now() - lastAuthOkAt < AUTH_TTL) {
+async function ensureAuth(force = false) {
+    if (!force && isAuthenticated.value === true && token.value && Date.now() - lastAuthOkAt < AUTH_TTL) {
         return true;
     }
+    if (authRequest) return authRequest;
+    authRequest = (async () => {
     authChecking.value = true;
     isAuthenticated.value = false;
     if (!token.value || !currentUser.value) {
@@ -149,17 +204,24 @@ async function ensureAuth() {
         return false;
     }
     try {
-        const res = await fetch(`${baseUrl.value}/api/mailboxes`, { headers: authHeaders() });
+        const res = await apiFetch('/api/me');
         if (res.ok) {
-            isAuthenticated.value = true;
-            lastAuthOkAt = Date.now();
             const data = await res.json();
+            const profile = data.user || {};
+            currentUser.value = profile.username || currentUser.value;
+            isAdmin.value = profile.role === 'admin';
             mailboxes.value = data.mailboxes || [];
             mailboxesAt = Date.now();
-            const adminRes = await fetch(`${baseUrl.value}/api/admin/settings`, { headers: authHeaders() });
-            isAdmin.value = adminRes.ok;
-            await fetchQuota(true);
+            if (data.quota) { quota.value = data.quota; quotaAt = Date.now(); }
             authChecking.value = false;
+            isAuthenticated.value = true;
+            lastAuthOkAt = Date.now();
+            storeSet('cf_mail_user', currentUser.value);
+            if (mailboxes.value.length > 0 && !selectedMailbox.value) {
+                setSelectedMailbox(mailboxes.value[0].address);
+            } else if (selectedMailbox.value && !mailboxes.value.some(m => m.address === selectedMailbox.value)) {
+                setSelectedMailbox(mailboxes.value[0]?.address || '');
+            }
             return true;
         }
         clearAuth();
@@ -170,6 +232,9 @@ async function ensureAuth() {
         authChecking.value = false;
         return false;
     }
+    })();
+    try { return await authRequest; }
+    finally { authRequest = null; }
 }
 
 // ---------- 邮箱 ----------
@@ -192,8 +257,9 @@ const SYNC_TTL = 30 * 1000;
 
 async function fetchMailboxes(force = false) {
     if (!force && mailboxesAt && Date.now() - mailboxesAt < SYNC_TTL) return;
-    try {
-        const res = await fetch(`${baseUrl.value}/api/mailboxes`, { headers: authHeaders() });
+    if (mailboxesRequest) return mailboxesRequest;
+    mailboxesRequest = (async () => { try {
+        const res = await apiFetch('/api/mailboxes');
         if (res.ok) {
             const data = await res.json();
             mailboxes.value = data.mailboxes || [];
@@ -205,14 +271,19 @@ async function fetchMailboxes(force = false) {
             }
         }
     } catch (e) { console.error('fetch mailboxes error:', e); }
+    })();
+    try { await mailboxesRequest; } finally { mailboxesRequest = null; }
 }
 
 async function fetchQuota(force = false) {
     if (!force && quotaAt && Date.now() - quotaAt < SYNC_TTL) return;
-    try {
-        const res = await fetch(`${baseUrl.value}/api/user/quota`, { headers: authHeaders() });
+    if (quotaRequest) return quotaRequest;
+    quotaRequest = (async () => { try {
+        const res = await apiFetch('/api/user/quota');
         if (res.ok) { quota.value = await res.json(); quotaAt = Date.now(); }
     } catch (e) { /* silent */ }
+    })();
+    try { await quotaRequest; } finally { quotaRequest = null; }
 }
 
 function switchMailbox(address) {
@@ -233,9 +304,16 @@ function formatDate(d) {
 }
 
 // 刷新 lucide 图标（data-lucide + createIcons 模式）
+let iconRefreshQueued = false;
 async function refreshIcons() {
-    await nextTick();
-    if (window.lucide) window.lucide.createIcons();
+    if (iconRefreshQueued) return;
+    iconRefreshQueued = true;
+    try {
+        await nextTick();
+        createIcons({ icons: iconSet });
+    } finally {
+        iconRefreshQueued = false;
+    }
 }
 
 function showError(target, msg) { target.value = msg; }
@@ -376,7 +454,7 @@ export {
     // 配置/登录
     baseUrl, defaultDomain, token, currentUser, isAdmin, isAuthenticated, authChecking,
     configError, configErrorMessage, loadConfig, ensureAuth, clearAuth,
-    authHeaders, jsonHeaders,
+    authHeaders, jsonHeaders, apiFetch,
     // 邮箱
     mailboxes, selectedMailbox, quota, currentMailbox, fetchMailboxes, fetchQuota,
     switchMailbox, setSelectedMailbox,

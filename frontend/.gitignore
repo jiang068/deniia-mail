@@ -26,3 +26,6 @@ npm-debug.log*
 # public/config.json 会被 Vite 拷入 dist，供 SPA 在 /config.json 运行时读取；
 config.json
 public/config.json
+
+# ---- 部署配置（含真实账号 id，勿提交）----
+wrangler.toml

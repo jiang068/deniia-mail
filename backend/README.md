@@ -99,13 +99,28 @@ npx wrangler d1 execute mail-db --file=schema.sql --remote
 npx wrangler d1 execute mail-db --file=migrations/001_add_delivery_status.sql --remote
 npx wrangler d1 execute mail-db --file=migrations/002_invite_codes.sql --remote
 npx wrangler d1 execute mail-db --file=migrations/003_catchall_whitelist.sql --remote
+npx wrangler d1 execute mail-db --file=migrations/004_performance.sql --remote
 ```
 
-### 5. 配置 Resend（发件必需）
+### 5. 配置初始化密钥
+
+部署完成后，在 Cloudflare Dashboard → **Workers & Pages** → 你的 Worker →
+**Settings → Variables and Secrets** 中添加 `BOOTSTRAP_TOKEN`。
+它用于首次在网页初始化管理员，且不会写入前端或 D1。
+
+也可以使用 Wrangler 设置：
+
+```bash
+npx wrangler secret put BOOTSTRAP_TOKEN
+```
+
+### 6. 配置 Resend（发件必需）
 
 ```bash
 npx wrangler secret put RESEND_API_KEY
 ```
+
+也可以在 Cloudflare Dashboard 的同一处添加 `RESEND_API_KEY`。
 
 > **获取 Key：**
 > 1. 登录 [Resend](https://resend.com)
@@ -113,10 +128,10 @@ npx wrangler secret put RESEND_API_KEY
 > 3. API Keys → Create API Key → 权限勾选 `Email: send` / `Inbound: read`
 > 4. 复制生成的 `re_...` Key
 
-### 6. 配置投递状态 Webhook（可选但推荐）
+### 7. 配置投递状态 Webhook（推荐）
 
-在 Resend → Webhooks 新建，事件选 `email.sent` / `email.delivered` / `email.bounced` / `email.complained`，
-URL 填你的 Worker 地址 + `/api/webhooks/resend`（如 `https://mail-backend.xxx.workers.dev/api/webhooks/resend`），
+在 Resend → Webhooks 新建，事件选 `email.sent` / `email.delivered` / `email.bounced` / `email.complained` / `email.opened` / `email.clicked`，
+URL 填 Worker 的 custom domain + `/api/webhooks/resend`（如 `https://mail-backend.example.com/api/webhooks/resend`），
 并复制 Signing Secret，然后：
 
 ```bash
@@ -125,7 +140,7 @@ npx wrangler secret put RESEND_WEBHOOK_SECRET
 
 > 这样发件状态的「发送中 / 已送达 / 已退回」会实时更新。
 
-### 7. 配置 Email Routing 收件
+### 8. 配置 Email Routing 收件
 
 1. Cloudflare Dashboard → **Email → Email Routing**
 2. 添加域名并按提示配置 DNS（MX 等）
@@ -134,7 +149,7 @@ npx wrangler secret put RESEND_WEBHOOK_SECRET
 > 确保 `wrangler.toml` 的 `DOMAIN` 与 Email Routing 域名一致。
 > **收件是免费且不限量的**，与 Resend 的发件配额（免费档约 100 封/天、3000 封/月）相互独立。
 
-### 8. 部署
+### 9. 部署
 
 ```bash
 npx wrangler deploy
@@ -142,10 +157,12 @@ npx wrangler deploy
 
 部署成功后输出 Worker URL，形如 `https://webmail-backend.xxx.workers.dev`，前端用它作 `baseUrl`。
 
-### 9. 首次初始化管理员
+### 10. 首次初始化管理员
 
-打开 `GET /api/admin/check`（或直接访问 Worker 的新手引导），按提示创建第一个管理员账号，
-随后即可在管理后台配置邀请码、白名单、限额等。
+打开前端的注册页面，输入 `BOOTSTRAP_TOKEN` 和管理员账号密码，即可创建第一个管理员账号。
+也可以调用 `POST /api/admin/setup`，提交 `setup_token`、`username`、`password` 完成初始化。
+首次初始化只在 `users` 表完全为空时有效；一旦出现过用户，即使管理员后来被删除或降权，也不会再次开放免邀请码的管理员注册。
+初始化完成后即可在管理后台配置邀请码、白名单、限额等。
 
 ---
 
@@ -156,8 +173,11 @@ npx wrangler deploy
 | `DOMAIN` | `wrangler.toml` `[vars]` | 邮箱域名，如 `example.com` |
 | `ALLOWED_ORIGINS` | `wrangler.toml` `[vars]` | 允许跨域调用 API 的前端来源，逗号分隔 |
 | `database_id` | `wrangler.toml` `[[d1_databases]]` | D1 数据库 ID |
-| `RESEND_API_KEY` | `wrangler secret put` | Resend API Key（发件必需） |
-| `RESEND_WEBHOOK_SECRET` | `wrangler secret put` | Resend Webhook 签名密钥（投递状态，可选） |
+| `BOOTSTRAP_TOKEN` | Cloudflare Secret | 首次网页初始化管理员的密钥（必需） |
+| `RESEND_API_KEY` | Cloudflare Secret | Resend API Key（发件必需） |
+| `RESEND_WEBHOOK_SECRET` | Cloudflare Secret | Resend Webhook 签名密钥（启用 Webhook 时必需） |
+
+`wrangler.toml` 已配置 `*/5 * * * *` Cron Trigger，作为 Webhook 之外的投递状态兜底轮询。
 
 ---
 
@@ -167,9 +187,9 @@ npx wrangler deploy
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/admin/check` | 检查是否存在管理员 |
-| POST | `/api/admin/setup` | 首次部署初始化管理员 |
-| POST | `/api/register` | 注册用户（受开关/邀请码控制） |
+| GET | `/api/admin/check` | 检查是否存在管理员及是否已初始化 |
+| POST | `/api/admin/setup` | 使用初始化密钥创建第一个管理员（JSON：`setup_token`、`username`、`password`） |
+| POST | `/api/register` | 注册普通用户（受开关/邀请码控制） |
 | POST | `/api/login` | 登录，返回 Bearer token |
 | GET | `/api/domains` | 可用域名列表 |
 | POST | `/api/webhooks/resend` | Resend 投递状态 Webhook |
@@ -179,6 +199,7 @@ npx wrangler deploy
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/mailboxes` | 当前用户的邮箱列表 |
+| GET | `/api/me` | 一次返回当前用户、邮箱列表和配额（前端首屏使用） |
 | GET | `/api/mailbox/info?address=` | 邮箱详情（转发/收藏） |
 | POST | `/api/mailbox/forward` | 设置转发目标 |
 | POST | `/api/mailbox/favorite` | 切换收藏 |
