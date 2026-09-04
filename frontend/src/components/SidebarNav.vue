@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   isAdmin, isAuthenticated,
   mailboxes, selectedMailbox, quota, currentMailbox, navFolders,
-  switchMailbox, fetchMailboxes, clearAuth,
+  switchMailbox, fetchMailboxes, clearAuth, brandName,
 } from '../stores/mail.js';
 import { mobileSidebarCls, closeDrawer, isMobile, sidebarOpen } from '../composables/mobileShell.js';
 
@@ -37,7 +37,7 @@ function doLogout() {
         <div class="flex items-center justify-between px-2">
           <div class="flex items-center space-x-2">
             <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
-            <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
+            <span class="text-lg font-bold text-main tracking-wide">{{ brandName }}</span>
           </div>
           <RouterLink to="/settings" title="设置" class="text-faint hover:text-accent" @click="closeDrawer()"><i data-lucide="palette" class="w-5 h-5"></i></RouterLink>
         </div>

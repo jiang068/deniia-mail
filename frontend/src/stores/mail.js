@@ -12,6 +12,7 @@ import {
     MailOpen, Menu, Palette, RefreshCw, Reply, Search, Send, Settings, Shield,
     ShieldAlert, ShieldX, Shuffle, SquarePen, SquarePlus, Trash2, Users,
 } from 'lucide';
+import { themePacks, themePackMap, defaultThemePack } from '../themes/index.js';
 
 const iconSet = {
     AlertTriangle, BarChart3, Calendar, CheckCircle2, ChevronLeft, Feather, Filter,
@@ -22,8 +23,14 @@ const iconSet = {
 
 // ---------- 主题系统 ----------
 const THEME_KEY = 'deniia_theme';          // 'light' | 'dark'
+const THEME_PACK_KEY = 'deniia_theme_pack';
 const ACCENT_LIGHT_KEY = 'deniia_accent_light';
 const ACCENT_DARK_KEY = 'deniia_accent_dark';
+const BACKGROUND_KEY = 'deniia_background_image';
+const BACKGROUND_OPACITY_KEY = 'deniia_background_opacity';
+const UI_OPACITY_KEY = 'deniia_ui_opacity';
+const BUTTON_OPACITY_KEY = 'deniia_button_opacity';
+const BUTTON_HOVER_OPACITY_KEY = 'deniia_button_hover_opacity';
 
 // 默认强调色：日间少女粉，夜间神秘紫
 const DEFAULT_ACCENTS = { light: '#ec4899', dark: '#8b5cf6' };
@@ -45,22 +52,55 @@ function storeGet(key) { try { return window.localStorage.getItem(key); } catch 
 function storeSet(key, val) { try { window.localStorage.setItem(key, val); } catch (e) { /* storage 不可用则忽略 */ } }
 function storeRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { /* 忽略 */ } }
 
-const theme = ref(storeGet(THEME_KEY) || 'light');
+const theme = ref(storeGet(THEME_KEY) === 'dark' ? 'dark' : 'light');
+const themePackId = ref(storeGet(THEME_PACK_KEY) || defaultThemePack.id);
+const activeTheme = computed(() => themePackMap[themePackId.value] || defaultThemePack);
+const brandName = computed(() => activeTheme.value.brand.name);
+const brandShortName = computed(() => activeTheme.value.brand.shortName);
+const brandTagline = computed(() => activeTheme.value.brand.tagline);
+const brandDescription = computed(() => activeTheme.value.brand.description);
+const backgroundImage = ref(normalizeBackgroundImage(storeGet(BACKGROUND_KEY) || ''));
+const backgroundOpacity = ref(normalizeBackgroundOpacity(storeGet(BACKGROUND_OPACITY_KEY), theme.value));
+const uiOpacity = ref(normalizeUiOpacity(storeGet(UI_OPACITY_KEY)));
+const buttonOpacity = ref(normalizeButtonOpacity(storeGet(BUTTON_OPACITY_KEY)));
+const buttonHoverOpacity = ref(normalizeButtonHoverOpacity(storeGet(BUTTON_HOVER_OPACITY_KEY)));
 const accent = ref(getAccent(theme.value));
 
-function getAccent(mode) {
-    return storeGet(mode === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY) ||
-        DEFAULT_ACCENTS[mode];
+function accentKey(packId, mode) { return `deniia_accent_${packId}_${mode}`; }
+
+function getAccent(mode, pack = activeTheme.value) {
+    const legacy = pack.id === defaultThemePack.id
+        ? storeGet(mode === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY)
+        : '';
+    const candidate = storeGet(accentKey(pack.id, mode)) || legacy ||
+        pack?.modes?.[mode]?.['--c-accent'] || DEFAULT_ACCENTS[mode];
+    return /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : DEFAULT_ACCENTS[mode];
 }
 
 function applyTheme() {
     const root = document.documentElement;
+    const vars = activeTheme.value.modes[theme.value] || {};
+    Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value));
     root.setAttribute('data-theme', theme.value);
+    root.setAttribute('data-theme-pack', activeTheme.value.id);
     root.style.setProperty('--c-accent', accent.value);
     root.style.setProperty('--c-accent-hover', shade(accent.value, -12));
     root.style.setProperty('--c-accent-soft', soft(accent.value));
+    root.style.setProperty('--c-accent-ink', contrastInk(accent.value));
+    root.style.setProperty('--c-danger-ink', contrastInk(vars['--c-danger'] || '#e11d48'));
+    root.style.setProperty('--c-bg-opacity', String(backgroundOpacity.value));
+    root.style.setProperty('--c-ui-opacity', `${Math.round(uiOpacity.value * 100)}%`);
+    root.style.setProperty('--c-button-opacity', `${Math.round(buttonOpacity.value * 100)}%`);
+    root.style.setProperty('--c-button-hover-opacity', `${Math.round(buttonHoverOpacity.value * 100)}%`);
+    root.style.setProperty('--c-bg-image', backgroundImage.value ? `url(${JSON.stringify(backgroundImage.value)})` : 'none');
     storeSet(THEME_KEY, theme.value);
-    storeSet(theme.value === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY, accent.value);
+    storeSet(THEME_PACK_KEY, activeTheme.value.id);
+    storeSet(accentKey(activeTheme.value.id, theme.value), accent.value);
+    // 保留默认主题的旧键，兼容已有版本的本地设置迁移。
+    if (activeTheme.value.id === defaultThemePack.id) {
+        storeSet(theme.value === 'dark' ? ACCENT_DARK_KEY : ACCENT_LIGHT_KEY, accent.value);
+    }
+    document.title = activeTheme.value.brand.name;
 }
 
 function shade(hex, amt) {
@@ -83,9 +123,107 @@ function setTheme(mode) {
     applyTheme();
 }
 
+function setThemePack(id) {
+    if (!themePackMap[id]) return;
+    themePackId.value = id;
+    accent.value = getAccent(theme.value);
+    applyTheme();
+}
+
 function setAccent(hex) {
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) return;
     accent.value = hex;
     applyTheme();
+}
+
+function contrastInk(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const channels = [n >> 16, (n >> 8) & 0xff, n & 0xff].map(v => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    const bgLuminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    const darkLuminance = 0.015;
+    const whiteContrast = (1 + 0.05) / (bgLuminance + 0.05);
+    const darkContrast = (Math.max(bgLuminance, darkLuminance) + 0.05) /
+        (Math.min(bgLuminance, darkLuminance) + 0.05);
+    return whiteContrast >= darkContrast ? '#ffffff' : '#17202a';
+}
+
+function normalizeBackgroundImage(value) {
+    const image = String(value || '').trim();
+    if (!image) return '';
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(image)) return image;
+    try {
+        const url = new URL(image, window.location.origin);
+        return url.protocol === 'https:' ? url.href : '';
+    } catch { return ''; }
+}
+
+function normalizeBackgroundOpacity(value, mode = 'light') {
+    const fallback = mode === 'dark' ? 0.65 : 0.55;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.round(Math.min(0.8, Math.max(0.1, number)) * 100) / 100;
+}
+
+function normalizeUiOpacity(value) {
+    const fallback = 0.88;
+    if (value === null || value === undefined || value === '') return fallback;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.round(Math.min(1, Math.max(0.45, number)) * 100) / 100;
+}
+
+function normalizeButtonOpacity(value) {
+    const fallback = 0.82;
+    if (value === null || value === undefined || value === '') return fallback;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.round(Math.min(1, Math.max(0.35, number)) * 100) / 100;
+}
+
+function normalizeButtonHoverOpacity(value) {
+    const fallback = 0.60;
+    if (value === null || value === undefined || value === '') return fallback;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    const stepped = Math.round(number / 0.05) * 0.05;
+    return Math.round(Math.min(1, Math.max(0.35, stepped)) * 100) / 100;
+}
+
+function setBackgroundImage(value) {
+    backgroundImage.value = normalizeBackgroundImage(value);
+    storeSet(BACKGROUND_KEY, backgroundImage.value);
+    applyTheme();
+}
+
+function setBackgroundOpacity(value) {
+    backgroundOpacity.value = normalizeBackgroundOpacity(value, theme.value);
+    storeSet(BACKGROUND_OPACITY_KEY, String(backgroundOpacity.value));
+    applyTheme();
+}
+
+function setUiOpacity(value) {
+    uiOpacity.value = normalizeUiOpacity(value);
+    storeSet(UI_OPACITY_KEY, String(uiOpacity.value));
+    applyTheme();
+}
+
+function setButtonOpacity(value) {
+    buttonOpacity.value = normalizeButtonOpacity(value);
+    storeSet(BUTTON_OPACITY_KEY, String(buttonOpacity.value));
+    applyTheme();
+}
+
+function setButtonHoverOpacity(value) {
+    buttonHoverOpacity.value = normalizeButtonHoverOpacity(value);
+    storeSet(BUTTON_HOVER_OPACITY_KEY, String(buttonHoverOpacity.value));
+    applyTheme();
+}
+
+function clearBackgroundImage() {
+    setBackgroundImage('');
 }
 
 applyTheme();
@@ -111,6 +249,30 @@ let authRequest = null;
 let mailboxesRequest = null;
 let quotaRequest = null;
 const API_TIMEOUT = 15000;
+const loadingVisible = ref(false);
+const loadingMessage = ref('正在加载…');
+let loadingCount = 0;
+let loadingShowTimer = null;
+
+function beginLoading(message = '正在加载…', { immediate = false } = {}) {
+    loadingCount += 1;
+    if (loadingCount === 1) {
+        loadingMessage.value = message;
+        if (immediate) {
+            loadingVisible.value = true;
+        } else {
+            loadingShowTimer = setTimeout(() => { loadingVisible.value = true; }, 160);
+        }
+    }
+}
+
+function endLoading() {
+    loadingCount = Math.max(0, loadingCount - 1);
+    if (loadingCount !== 0) return;
+    if (loadingShowTimer) clearTimeout(loadingShowTimer);
+    loadingShowTimer = null;
+    loadingVisible.value = false;
+}
 
 async function loadConfig(force = false) {
     if (!force && baseUrl.value && configCacheAt && Date.now() - configCacheAt < CONFIG_TTL) {
@@ -156,7 +318,7 @@ function jsonHeaders(extra = {}) {
 }
 
 async function apiFetch(path, options = {}) {
-    const { auth = true, timeout = API_TIMEOUT, signal: externalSignal, ...init } = options;
+    const { auth = true, timeout = API_TIMEOUT, loading = true, loadingText = '正在加载…', signal: externalSignal, ...init } = options;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('timeout'), timeout);
     let onAbort;
@@ -167,9 +329,11 @@ async function apiFetch(path, options = {}) {
     }
     const headers = new Headers(init.headers || {});
     if (auth && token.value) headers.set('Authorization', `Bearer ${token.value}`);
+    if (loading) beginLoading(loadingText);
     try {
         return await fetch(`${baseUrl.value}${path}`, { ...init, headers, signal: controller.signal });
     } finally {
+        if (loading) endLoading();
         clearTimeout(timer);
         if (externalSignal && onAbort) externalSignal.removeEventListener('abort', onAbort);
     }
@@ -418,17 +582,35 @@ function protectContent(rawHtml) {
 // 邮件里的全局选择器（如 body{...}、h1{...}）只在 iframe 文档内生效。
 function buildEmailDocument(rawHtml) {
     const r = sanitizeEmail(rawHtml);
-    const themeBg = getComputedStyle(document.documentElement).getPropertyValue('--c-app').trim() || '#ffffff';
+    const rootStyles = getComputedStyle(document.documentElement);
+    const mailBg = rootStyles.getPropertyValue('--mail-body-bg').trim() || '#ffffff';
+    const mailText = rootStyles.getPropertyValue('--mail-body-text').trim() || '#17202a';
+    const mailLink = rootStyles.getPropertyValue('--mail-body-link').trim() || '#075985';
     return `<!DOCTYPE html>
 <html lang="zh-CN" style="margin:0;padding:0;">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  html, body { margin:0; padding:0; }
-  body { background: ${themeBg}; }
-</style>
 ${r.styles}
+<style>
+  :root { color-scheme: light; }
+  html, body { margin:0; padding:0; }
+  body {
+    background: ${mailBg} !important;
+    color: ${mailText} !important;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  body :where(p, div, span, li, td, th, h1, h2, h3, h4, h5, h6, label, figcaption, strong, b, em, i, small, blockquote, caption, dt, dd) {
+    color: ${mailText} !important;
+  }
+  body :where(table, tr, td, th, section, article, div, p, blockquote) { background-color: transparent !important; }
+  body a { color: ${mailLink} !important; background-color: transparent !important; text-decoration: underline; }
+  body img, body video { max-width: 100%; height: auto; }
+  body table { max-width: 100%; }
+  body pre, body code { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
 </head>
 <body>${r.body}</body>
 </html>`;
@@ -451,10 +633,16 @@ function hasAdvancedTrackersOf(html) {
 export {
     // 主题
     theme, accent, ACCENT_PRESETS, DEFAULT_ACCENTS, setTheme, setAccent,
+    themePacks, themePackId, activeTheme, brandName, brandShortName, brandTagline, brandDescription,
+    setThemePack, backgroundImage, setBackgroundImage, clearBackgroundImage,
+    backgroundOpacity, setBackgroundOpacity,
+    uiOpacity, setUiOpacity,
+    buttonOpacity, setButtonOpacity,
+    buttonHoverOpacity, setButtonHoverOpacity,
     // 配置/登录
     baseUrl, defaultDomain, token, currentUser, isAdmin, isAuthenticated, authChecking,
     configError, configErrorMessage, loadConfig, ensureAuth, clearAuth,
-    authHeaders, jsonHeaders, apiFetch,
+    authHeaders, jsonHeaders, apiFetch, loadingVisible, loadingMessage, beginLoading, endLoading,
     // 邮箱
     mailboxes, selectedMailbox, quota, currentMailbox, fetchMailboxes, fetchQuota,
     switchMailbox, setSelectedMailbox,

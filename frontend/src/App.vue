@@ -1,7 +1,7 @@
 <script setup>
 import { watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { refreshIcons } from './stores/mail.js';
+import { loadingMessage, loadingVisible, refreshIcons } from './stores/mail.js';
 
 const route = useRoute();
 
@@ -15,4 +15,12 @@ watch(
 
 <template>
   <router-view />
+  <Transition name="loading-fade">
+    <div v-if="loadingVisible" class="loading-overlay" role="status" aria-live="polite">
+      <div class="loading-card">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>{{ loadingMessage }}</span>
+      </div>
+    </div>
+  </Transition>
 </template>

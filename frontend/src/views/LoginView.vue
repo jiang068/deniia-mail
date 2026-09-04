@@ -140,9 +140,7 @@ onMounted(boot);
     </div>
 
     <!-- 初始化检查中：避免检查完成前误显示邀请码表单 -->
-    <div v-else-if="!checked" class="max-w-md w-full bg-surface rounded-xl shadow-panel p-8 text-center border border-line">
-      <p class="text-sm text-sub">正在检查系统状态…</p>
-    </div>
+    <div v-else-if="!checked" class="max-w-md w-full bg-surface rounded-xl shadow-panel p-8 text-center border border-line" aria-hidden="true"></div>
 
     <!-- 登录 / 注册 -->
     <div v-else class="max-w-md w-full bg-surface rounded-xl shadow-panel p-8 space-y-6 border border-line">
@@ -211,7 +209,9 @@ onMounted(boot);
         <button v-else @click="toggleRegister" class="text-accent hover:underline">已有账号？点击登录</button>
       </div>
 
-      <RouterLink to="/" class="block text-center text-xs text-faint hover:text-accent">← 返回首页</RouterLink>
+      <div class="flex justify-start">
+        <RouterLink to="/" class="back-link">← 返回首页</RouterLink>
+      </div>
     </div>
   </div>
 </template>

@@ -19,6 +19,7 @@ const viewMode = ref('rendered');
 const nextCursor = ref(null);
 const loadingMore = ref(false);
 const loadingRaw = ref(false);
+const refreshing = ref(false);
 let listController = null;
 let detailController = null;
 let listRequestSeq = 0;
@@ -47,12 +48,12 @@ const filteredEmails = computed(() => {
 });
 
 const listColumnCls = computed(() => {
-  if (!isMobile.value) return 'w-80 bg-surface border-r border-line flex flex-col flex-shrink-0';
-  return selectedEmail.value ? 'hidden' : 'flex-1 bg-surface border-r border-line flex flex-col min-w-0';
+  if (!isMobile.value) return 'w-80 min-h-0 mail-workspace-panel border-r border-line flex flex-col flex-shrink-0';
+  return selectedEmail.value ? 'hidden' : 'flex-1 min-h-0 mail-workspace-panel border-r border-line flex flex-col min-w-0';
 });
 const detailCls = computed(() => {
-  if (!isMobile.value) return 'flex-1 bg-surface flex flex-col overflow-hidden';
-  return selectedEmail.value ? 'flex-1 bg-surface flex flex-col overflow-hidden' : 'hidden';
+  if (!isMobile.value) return 'flex-1 min-h-0 mail-workspace-panel flex flex-col overflow-hidden';
+  return selectedEmail.value ? 'flex-1 min-h-0 mail-workspace-panel flex flex-col overflow-hidden' : 'hidden';
 });
 
 function backToList() { selectedEmail.value = null; window.scrollTo(0, 0); }
@@ -154,6 +155,17 @@ async function deleteEmail(id) {
 
 function setLevel(l) { remoteContentLevel.value = l; }
 
+async function refreshInbox() {
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await fetchMailboxes(true);
+    await fetchEmails(true);
+  } finally {
+    refreshing.value = false;
+  }
+}
+
 // 挂载：拉取列表
 onMounted(async () => {
   await fetchMailboxes();
@@ -184,20 +196,25 @@ watch(() => selectedMailbox.value, async (nv) => {
 </script>
 
 <template>
-  <div class="flex-1 flex overflow-hidden bg-app h-full">
+  <div class="flex-1 min-h-0 min-w-0 flex overflow-hidden bg-app h-full">
     <!-- 邮件列表 -->
     <div :class="listColumnCls">
-      <div class="p-4 border-b border-line">
-        <div class="relative flex items-center">
+      <div class="p-3 border-b border-line inbox-toolbar">
+        <div class="relative flex-1 min-w-0">
           <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-faint md:top-2.5"></i>
           <input type="text" v-model="searchQuery" placeholder="搜索邮件..."
             class="w-full pl-9 pr-3 py-1.5 bg-surface2 text-main border border-line rounded-lg text-sm focus:ring-2 ring-accent focus:outline-none">
         </div>
+        <button @click="refreshInbox" :disabled="refreshing"
+          class="shrink-0 px-2.5 py-1.5 bg-surface2 text-sub border border-line rounded-lg text-xs font-medium hover:bg-surface3 hover:text-accent transition disabled:opacity-50 flex items-center gap-1.5"
+          title="刷新收件箱" aria-label="刷新收件箱">
+          <i data-lucide="refresh-cw" :class="['w-4 h-4', refreshing ? 'animate-spin' : '']"></i>
+          <span class="hidden sm:inline">{{ refreshing ? '刷新中' : '刷新' }}</span>
+        </button>
       </div>
 
       <div class="flex-1 overflow-y-auto divide-y divide-line">
-        <div v-if="loadingEmails" class="p-8 text-center text-xs text-faint">加载中...</div>
-        <div v-else-if="filteredEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无邮件</div>
+        <div v-if="!loadingEmails && filteredEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无邮件</div>
         <div v-for="mail in filteredEmails" :key="mail.id"
           @click="selectEmail(mail)"
           :class="['p-4 cursor-pointer hover:bg-surface3 transition', selectedEmail?.id === mail.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
@@ -214,7 +231,7 @@ watch(() => selectedMailbox.value, async (nv) => {
         </div>
         <button v-if="nextCursor" @click="loadMore" :disabled="loadingMore"
           class="w-full py-3 text-xs text-accent hover:bg-surface3 disabled:opacity-50">
-          {{ loadingMore ? '加载中...' : '加载更多' }}
+          加载更多
         </button>
       </div>
     </div>
@@ -225,7 +242,7 @@ watch(() => selectedMailbox.value, async (nv) => {
         <div class="p-4 border-b border-line flex flex-wrap items-center gap-2 justify-between">
           <div class="flex items-center gap-2 flex-wrap">
             <button v-if="isMobile" @click="backToList"
-              class="px-2.5 py-1.5 bg-surface2 border border-line rounded-md text-xs font-medium text-sub hover:bg-surface3 flex items-center space-x-1">
+              class="mobile-back-button">
               <i data-lucide="chevron-left" class="w-4 h-4"></i><span>返回</span>
             </button>
             <RouterLink :to="'/compose?to=' + encodeURIComponent(selectedEmail.sender || selectedEmail.from_addr) + '&subject=' + encodeURIComponent('Re: ' + (selectedEmail.subject||''))"
@@ -274,7 +291,7 @@ watch(() => selectedMailbox.value, async (nv) => {
               </div>
               <div v-if="hasExternalImages || hasAdvancedTrackers" class="flex gap-2 shrink-0">
                 <button @click="setLevel(1)" class="px-2.5 py-1 bg-accent text-accent-ink rounded-md font-medium">只加载图片</button>
-                <button @click="setLevel(2)" class="px-2.5 py-1 bg-danger text-white rounded-md font-medium">加载全部</button>
+                <button @click="setLevel(2)" class="px-2.5 py-1 bg-danger danger-ink rounded-md font-medium">加载全部</button>
               </div>
             </template>
             <template v-else>
@@ -286,12 +303,10 @@ watch(() => selectedMailbox.value, async (nv) => {
               <button @click="setLevel(0)" class="px-2.5 py-1 bg-surface2 text-sub border border-line rounded-md font-medium shrink-0">恢复拦截</button>
             </template>
           </div>
-          <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <template v-else>
+          <template v-if="!loadingDetail">
             <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
-            <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
-            <div v-else-if="viewMode==='raw' && loadingRaw" class="text-sm text-faint py-4">加载原始邮件...</div>
-            <pre v-else-if="viewMode==='raw'" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.raw_content || '无 RAW 内容' }}</pre>
+            <pre v-else-if="viewMode==='html'" class="mail-source p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
+            <pre v-else-if="viewMode==='raw' && !loadingRaw" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.raw_content || '无 RAW 内容' }}</pre>
           </template>
         </div>
       </template>

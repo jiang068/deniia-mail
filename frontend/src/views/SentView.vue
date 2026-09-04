@@ -36,12 +36,12 @@ const filteredEmails = computed(() => {
 });
 
 const listColumnCls = computed(() => {
-  if (!isMobile.value) return 'w-80 bg-surface border-r border-line flex flex-col flex-shrink-0';
-  return selectedEmail.value ? 'hidden' : 'flex-1 bg-surface border-r border-line flex flex-col min-w-0';
+  if (!isMobile.value) return 'w-80 min-h-0 mail-workspace-panel border-r border-line flex flex-col flex-shrink-0';
+  return selectedEmail.value ? 'hidden' : 'flex-1 min-h-0 mail-workspace-panel border-r border-line flex flex-col min-w-0';
 });
 const detailCls = computed(() => {
-  if (!isMobile.value) return 'flex-1 bg-surface flex flex-col overflow-hidden';
-  return selectedEmail.value ? 'flex-1 bg-surface flex flex-col overflow-hidden' : 'hidden';
+  if (!isMobile.value) return 'flex-1 min-h-0 mail-workspace-panel flex flex-col overflow-hidden';
+  return selectedEmail.value ? 'flex-1 min-h-0 mail-workspace-panel flex flex-col overflow-hidden' : 'hidden';
 });
 function backToList() { selectedEmail.value = null; window.scrollTo(0, 0); }
 
@@ -163,7 +163,7 @@ watch(() => selectedMailbox.value, async (nv) => {
 </script>
 
 <template>
-  <div class="flex-1 flex overflow-hidden bg-app h-full">
+  <div class="flex-1 min-h-0 min-w-0 flex overflow-hidden bg-app h-full">
     <!-- 已发送列表 -->
     <div :class="listColumnCls">
       <div class="p-4 border-b border-line">
@@ -180,8 +180,7 @@ watch(() => selectedMailbox.value, async (nv) => {
       </div>
 
       <div class="flex-1 overflow-y-auto divide-y divide-line">
-        <div v-if="loadingEmails" class="p-8 text-center text-xs text-faint">加载中...</div>
-        <div v-else-if="filteredEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无已发送邮件</div>
+        <div v-if="!loadingEmails && filteredEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无已发送邮件</div>
         <div v-for="mail in filteredEmails" :key="mail.id"
           @click="selectEmail(mail)"
           :class="['p-4 cursor-pointer hover:bg-surface3 transition', selectedEmail?.id === mail.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
@@ -197,7 +196,7 @@ watch(() => selectedMailbox.value, async (nv) => {
         </div>
         <button v-if="nextCursor" @click="loadMore" :disabled="loadingMore"
           class="w-full py-3 text-xs text-accent hover:bg-surface3 disabled:opacity-50">
-          {{ loadingMore ? '加载中...' : '加载更多' }}
+          加载更多
         </button>
       </div>
     </div>
@@ -208,7 +207,7 @@ watch(() => selectedMailbox.value, async (nv) => {
         <div class="p-4 md:p-6 border-b border-line">
           <div class="flex items-center gap-2 mb-3">
             <button v-if="isMobile" @click="backToList"
-              class="px-2.5 py-1.5 bg-surface2 border border-line rounded-md text-xs font-medium text-sub hover:bg-surface3 flex items-center space-x-1">
+              class="mobile-back-button">
               <i data-lucide="chevron-left" class="w-4 h-4"></i><span>返回</span>
             </button>
             <h2 class="text-xl font-bold text-main flex-1 min-w-0 truncate">{{ selectedEmail.subject }}</h2>
@@ -240,7 +239,7 @@ watch(() => selectedMailbox.value, async (nv) => {
               </div>
               <div v-if="hasExternalImages || hasAdvancedTrackers" class="flex gap-2 shrink-0">
                 <button @click="setLevel(1)" class="px-2.5 py-1 bg-accent text-accent-ink rounded-md font-medium">只加载图片</button>
-                <button @click="setLevel(2)" class="px-2.5 py-1 bg-danger text-white rounded-md font-medium">加载全部</button>
+                <button @click="setLevel(2)" class="px-2.5 py-1 bg-danger danger-ink rounded-md font-medium">加载全部</button>
               </div>
             </template>
             <template v-else>
@@ -252,10 +251,11 @@ watch(() => selectedMailbox.value, async (nv) => {
               <button @click="setLevel(0)" class="px-2.5 py-1 bg-surface2 text-sub border border-line rounded-md font-medium shrink-0">恢复拦截</button>
             </template>
           </div>
-          <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <div v-else-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="sentContent" /></div>
-          <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
-          <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.text_content || '无源码内容' }}</pre>
+          <template v-if="!loadingDetail">
+            <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="sentContent" /></div>
+            <pre v-else-if="viewMode==='html'" class="mail-source p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
+            <pre v-else-if="!loadingRaw" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.text || selectedEmail.text_content || '无源码内容' }}</pre>
+          </template>
         </div>
       </template>
       <div v-else class="flex-1 flex items-center justify-center text-faint flex-col space-y-2">

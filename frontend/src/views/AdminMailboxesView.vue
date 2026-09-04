@@ -43,20 +43,20 @@ const leftCls = computed(() => {
   if (tab.value === 'sent') return 'hidden';
   if (selectedMailbox.value && isMobile.value) return 'hidden';
   if (isMobile.value && selectedEmail.value) return 'hidden';
-  return 'w-72 md:w-80 bg-surface border-r border-line flex flex-col flex-shrink-0';
+  return 'w-72 md:w-80 min-h-0 bg-surface border-r border-line flex flex-col flex-shrink-0';
 });
 const midCls = computed(() => {
   if (tab.value === 'sent') {
     if (isMobile.value && selectedEmail.value) return 'hidden';
-    return 'flex-1 bg-surface border-r border-line flex flex-col min-w-0';
+    return 'flex-1 min-h-0 bg-surface border-r border-line flex flex-col min-w-0';
   }
   if (!selectedMailbox.value) return 'hidden';
   if (isMobile.value && selectedEmail.value) return 'hidden';
-  return 'flex-1 bg-surface border-r border-line flex flex-col min-w-0';
+  return 'flex-1 min-h-0 bg-surface border-r border-line flex flex-col min-w-0';
 });
 const detailCls = computed(() => {
   if (!selectedEmail.value) return 'hidden';
-  return 'flex-1 bg-surface flex flex-col overflow-hidden';
+  return 'flex-1 min-h-0 bg-surface flex flex-col overflow-hidden';
 });
 
 function resetSelection() {
@@ -166,25 +166,24 @@ if (isAdmin.value) loadMailboxes();
       <p class="text-sub">您没有管理员权限。</p>
     </div>
   </div>
-  <div v-else class="flex-1 flex flex-col overflow-hidden bg-app h-full">
+  <div v-else class="flex-1 min-h-0 flex flex-col overflow-hidden bg-app h-full">
     <!-- 顶部：收件箱/发件箱 页签 + 返回管理后台 -->
-    <div class="flex items-center justify-between px-4 py-2 bg-surface border-b border-line shrink-0">
+    <div class="flex items-center gap-3 flex-wrap px-4 py-2 bg-surface border-b border-line shrink-0">
+      <RouterLink to="/admin" class="back-link shrink-0">← 管理后台</RouterLink>
       <div class="flex items-center gap-1.5 bg-surface2 p-1 rounded-lg">
         <button @click="switchTab('inbox')" :class="['px-4 py-1.5 rounded-md text-sm font-medium', tab==='inbox' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">收件箱</button>
         <button @click="switchTab('sent')" :class="['px-4 py-1.5 rounded-md text-sm font-medium', tab==='sent' ? 'bg-accent text-accent-ink shadow' : 'text-sub hover:bg-surface3']">发件箱</button>
       </div>
-      <RouterLink to="/admin" class="text-xs text-accent hover:underline shrink-0">← 管理后台</RouterLink>
     </div>
 
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 min-h-0 flex overflow-hidden">
     <!-- 邮箱列表（收件箱模式） -->
     <section :class="leftCls">
       <div class="p-4 border-b border-line">
         <h2 class="font-semibold text-main flex items-center gap-2"><i data-lucide="inbox" class="w-4 h-4 text-accent"></i>全部邮箱</h2>
       </div>
       <div class="flex-1 overflow-y-auto divide-y divide-line">
-        <div v-if="loadingMailboxes" class="p-8 text-center text-xs text-faint">加载中...</div>
-        <div v-else-if="mailboxes.length === 0" class="p-8 text-center text-xs text-faint">暂无邮箱</div>
+        <div v-if="!loadingMailboxes && mailboxes.length === 0" class="p-8 text-center text-xs text-faint">暂无邮箱</div>
         <div v-for="mb in mailboxes" :key="mb.id" @click="openMailbox(mb)"
           :class="['p-3 cursor-pointer hover:bg-surface3 transition', selectedMailbox?.id === mb.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
           <div class="text-xs font-medium text-main font-mono truncate">{{ mb.address }}</div>
@@ -204,8 +203,7 @@ if (isAdmin.value) loadMailboxes();
       </div>
       <div class="flex-1 overflow-y-auto divide-y divide-line">
         <template v-if="tab==='inbox'">
-          <div v-if="loadingEmails" class="p-8 text-center text-xs text-faint">加载中...</div>
-          <div v-else-if="emails.length === 0" class="p-8 text-center text-xs text-faint">该邮箱暂无邮件</div>
+          <div v-if="!loadingEmails && emails.length === 0" class="p-8 text-center text-xs text-faint">该邮箱暂无邮件</div>
           <div v-for="mail in emails" :key="mail.id" @click="openEmail(mail)"
             :class="['p-3 cursor-pointer hover:bg-surface3 transition', selectedEmail?.id === mail.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
             <div class="flex justify-between items-center">
@@ -216,8 +214,7 @@ if (isAdmin.value) loadMailboxes();
           </div>
         </template>
         <template v-else>
-          <div v-if="loadingEmails" class="p-8 text-center text-xs text-faint">加载中...</div>
-          <div v-else-if="sentEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无已发送邮件</div>
+          <div v-if="!loadingEmails && sentEmails.length === 0" class="p-8 text-center text-xs text-faint">暂无已发送邮件</div>
           <div v-for="s in sentEmails" :key="s.id" @click="openSentEmail(s)"
             :class="['p-3 cursor-pointer hover:bg-surface3 transition', selectedEmail?.id === s.id ? 'bg-accent-soft border-l-4 border-accent' : '']">
             <div class="flex justify-between items-center">
@@ -236,7 +233,7 @@ if (isAdmin.value) loadMailboxes();
       <template v-if="selectedEmail">
         <div class="p-4 border-b border-line flex items-center gap-2 justify-between flex-wrap">
           <div class="flex items-center gap-2">
-            <button v-if="isMobile" @click="backToEmails" class="px-2.5 py-1.5 bg-surface2 border border-line rounded-md text-xs text-sub flex items-center space-x-1">
+            <button v-if="isMobile" @click="backToEmails" class="mobile-back-button">
               <i data-lucide="chevron-left" class="w-4 h-4"></i><span>返回</span>
             </button>
             <h2 class="text-base font-bold text-main truncate">{{ selectedEmail.subject }}</h2>
@@ -264,11 +261,11 @@ if (isAdmin.value) loadMailboxes();
           </template>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
-          <div v-if="loadingDetail" class="text-sm text-faint py-4">加载正文...</div>
-          <div v-else-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
-          <pre v-else-if="viewMode==='html'" class="bg-surface2 text-green p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
-          <div v-else-if="viewMode==='raw' && loadingRaw" class="text-sm text-faint py-4">加载原始邮件...</div>
-          <pre v-else class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ tab==='sent' ? (selectedEmail.content || selectedEmail.text || '无正文') : (selectedEmail.raw_content || '无 RAW 内容') }}</pre>
+          <template v-if="!loadingDetail">
+            <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
+            <pre v-else-if="viewMode==='html'" class="mail-source p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>
+            <pre v-else-if="!loadingRaw" class="bg-surface2 text-main p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ tab==='sent' ? (selectedEmail.content || selectedEmail.text || '无正文') : (selectedEmail.raw_content || '无 RAW 内容') }}</pre>
+          </template>
         </div>
       </template>
       <div v-else class="flex-1 flex items-center justify-center text-faint flex-col space-y-2">

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import {
   baseUrl, defaultDomain, currentUser, currentMailbox,
   configError, configErrorMessage, loadConfig, ensureAuth, refreshIcons,
+  brandName, brandTagline, brandDescription,
 } from '../stores/mail.js';
 
 const router = useRouter();
@@ -40,7 +41,7 @@ onMounted(boot);
     <div class="w-full flex items-center justify-between px-6 py-4">
       <div class="flex items-center space-x-2">
         <i data-lucide="mail-check" class="w-6 h-6 text-accent"></i>
-        <span class="text-lg font-bold text-main tracking-wide">Deniia Mail</span>
+        <span class="text-lg font-bold text-main tracking-wide">{{ brandName }}</span>
       </div>
       <RouterLink to="/settings" title="设置" class="text-faint hover:text-accent"><i data-lucide="palette" class="w-5 h-5"></i></RouterLink>
     </div>
@@ -48,8 +49,8 @@ onMounted(boot);
     <div class="flex-1 flex items-center justify-center px-6 pb-24">
       <div class="max-w-lg w-full text-center space-y-6">
         <div class="inline-flex p-5 bg-accent-soft text-accent rounded-3xl mb-2"><i data-lucide="mail" class="w-12 h-12"></i></div>
-        <h1 class="text-3xl font-bold text-main">Deniia 临时邮箱</h1>
-        <p class="text-sub leading-relaxed">隐私优先的临时邮箱。一次性的地址，拦截追踪器，保护你的收件箱不被骚扰。</p>
+        <h1 class="text-3xl font-bold text-main">{{ brandTagline }}</h1>
+        <p class="text-sub leading-relaxed">{{ brandDescription }}</p>
 
         <div v-if="loggedIn" class="space-y-4 pt-2">
           <div class="bg-surface border border-line rounded-xl p-5 text-left space-y-3">

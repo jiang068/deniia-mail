@@ -80,14 +80,14 @@ onMounted(refresh);
 </script>
 
 <template>
-  <main class="flex-1 p-4 md:p-10 overflow-y-auto h-full">
+  <main class="flex-1 min-h-0 p-4 md:p-10 overflow-y-auto h-full">
     <div class="max-w-2xl mx-auto">
-      <div class="flex items-center justify-between mb-8 flex-wrap gap-2">
-        <h1 class="text-2xl font-bold text-main flex items-center space-x-2">
+      <div class="page-header">
+        <RouterLink to="/inbox" class="back-link">← 返回收件箱</RouterLink>
+        <h1 class="page-header-title text-2xl font-bold text-main">
           <i data-lucide="mail" class="w-6 h-6 text-accent"></i>
           <span>邮箱管理</span>
         </h1>
-        <RouterLink to="/inbox" class="text-sm text-accent hover:underline">← 返回收件箱</RouterLink>
       </div>
 
       <div v-if="errorMessage" class="bg-danger-soft border border-danger-soft text-danger text-sm rounded-lg px-4 py-2 mb-4">{{ errorMessage }}</div>

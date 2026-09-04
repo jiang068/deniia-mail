@@ -5,7 +5,6 @@ import {
   refreshIcons,
 } from '../stores/mail.js';
 
-const ready = ref(false);
 const errorMessage = ref('');
 const activeTab = ref('settings'); // settings | users | invites | stats | mailboxes
 
@@ -193,28 +192,27 @@ watch(activeTab, async (t) => {
 onMounted(async () => {
   await fetchMailboxes();
   if (isAdmin.value) await loadAdmin();
-  ready.value = true;
   await refreshIcons();
 });
 </script>
 
 <template>
-  <main class="flex-1 p-4 md:p-8 overflow-y-auto h-full">
+  <main class="flex-1 min-h-0 p-4 md:p-8 overflow-y-auto h-full">
     <div class="max-w-6xl mx-auto">
-      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h1 class="text-xl font-bold text-main flex items-center space-x-2">
+      <div class="page-header compact">
+        <RouterLink to="/inbox" class="back-link">← 返回收件箱</RouterLink>
+        <h1 class="page-header-title text-xl font-bold text-main">
           <i data-lucide="shield" class="w-6 h-6 text-warn"></i>
           <span>管理后台</span>
         </h1>
-        <RouterLink to="/inbox" class="text-sm text-accent hover:underline">← 返回收件箱</RouterLink>
       </div>
 
-      <div v-if="!ready" class="text-faint text-sm">加载中...</div>
-
-      <div v-else-if="!isAdmin" class="bg-surface shadow-panel border border-line rounded-xl p-10 text-center">
+      <div v-if="!isAdmin" class="bg-surface shadow-panel border border-line rounded-xl p-10 text-center">
         <i data-lucide="shield-x" class="w-10 h-10 text-faint mx-auto mb-3"></i>
         <p class="text-sub">您没有管理员权限。</p>
-        <RouterLink to="/inbox" class="inline-block mt-4 px-4 py-2 bg-accent text-accent-ink rounded-lg text-sm">返回收件箱</RouterLink>
+        <div class="flex justify-start mt-4">
+          <RouterLink to="/inbox" class="back-link">返回收件箱</RouterLink>
+        </div>
       </div>
 
       <template v-else>

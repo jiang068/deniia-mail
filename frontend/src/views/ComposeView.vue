@@ -108,23 +108,25 @@ onMounted(boot);
 </script>
 
 <template>
-  <main class="flex-1 bg-surface flex flex-col overflow-hidden h-full">
-    <div class="p-4 border-b border-line flex flex-wrap justify-between items-center gap-2">
-      <h3 class="font-bold text-main flex items-center space-x-2">
-        <i data-lucide="square-pen" class="w-5 h-5 text-accent"></i>
-        <span>{{ editMode === 'forward' ? '转发邮件' : '撰写新邮件' }}</span>
-      </h3>
+  <main class="flex-1 min-h-0 bg-surface flex flex-col overflow-hidden h-full">
+    <div class="app-toolbar page-header">
+      <div class="page-header-leading">
+        <RouterLink to="/inbox" class="back-link">← 返回收件箱</RouterLink>
+        <h3 class="page-header-title font-bold text-main">
+          <i data-lucide="square-pen" class="w-5 h-5 text-accent"></i>
+          <span>{{ editMode === 'forward' ? '转发邮件' : '撰写新邮件' }}</span>
+        </h3>
+      </div>
       <div class="flex items-center gap-2">
         <button v-if="isMobile" @click="doLogout"
           class="px-3 py-2 bg-surface2 border border-line rounded-lg text-sm font-medium text-danger hover:bg-danger-soft">退出</button>
-        <RouterLink to="/inbox" class="px-4 py-2 bg-surface2 border border-line rounded-lg text-sm font-medium text-sub hover:bg-surface3">返回收件箱</RouterLink>
       </div>
     </div>
 
     <div v-if="errorMessage" class="mx-4 md:mx-6 mt-4 bg-danger-soft border border-danger-soft text-danger text-sm rounded-lg px-4 py-2">{{ errorMessage }}</div>
     <div v-if="notice" class="mx-4 md:mx-6 mt-4 bg-green-soft border border-green-soft text-green text-sm rounded-lg px-4 py-2">{{ notice }}</div>
 
-    <div class="p-4 md:p-6 flex-1 flex flex-col space-y-4 overflow-y-auto">
+    <div class="p-4 md:p-6 flex-1 min-h-0 flex flex-col space-y-4 overflow-y-auto">
       <div class="grid grid-cols-1 gap-3 text-sm">
         <div>
           <label class="block text-xs font-medium text-sub mb-1">收件人 (To)</label>
