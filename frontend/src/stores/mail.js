@@ -485,7 +485,8 @@ function showError(target, msg) { target.value = msg; }
 // ---------- 邮件渲染（含外链追踪拦截 + 保留 head 样式） ----------
 const remoteContentLevel = ref(0);
 
-function isExternalUrl(src) { return /^https?:\/\//i.test(src); }
+// 远程 URL 既包括绝对地址，也包括协议相对地址（//cdn.example/...）。
+function isExternalUrl(src) { return /^(?:https?:)?\/\//i.test(String(src || '').trim()); }
 
 function sanitizeStyleUrls(styleText, allowRemote) {
     if (!/url\(/i.test(styleText)) return styleText;
@@ -503,7 +504,14 @@ function sanitizeEmail(rawHtml) {
 
     const purifyCfg = {
         ADD_ATTR: ['target', 'data-original-src', 'data-original-srcset', 'data-blocked', 'data-level'],
-        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'base', 'meta', 'link'],
+        // 邮件正文通常把 CSS 放在 <head><style> 中；保留完整文档才能提取并重放这段 CSS。
+        WHOLE_DOCUMENT: true,
+        // link 在默认/仅图片模式下移除；用户明确选择“加载全部”时允许
+        // 外链样式和预加载正常按浏览器行为工作，但仍禁止可执行/嵌入类标签。
+        FORBID_TAGS: [
+            'script', 'iframe', 'object', 'embed', 'form', 'base', 'meta',
+            ...(allowAll ? [] : ['link']),
+        ],
         FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'autofocus'],
     };
     html = DOMPurify.sanitize(html, purifyCfg);
@@ -512,8 +520,10 @@ function sanitizeEmail(rawHtml) {
     let styleBlock = '';
     (doc.head ? doc.head.querySelectorAll('style') : []).forEach(st => {
         let css = st.textContent || '';
-        css = css.replace(/@import\s+(?:url\(\s*)?['"]?https?:\/\/[^'")\s;]+/gi, '');
-        if (!allowAll) css = css.replace(/url\(\s*['"]?https?:\/\/[^'")\s;]+/gi, 'url()');
+        if (!allowAll) {
+            css = css.replace(/@import\s+(?:url\(\s*)?['"]?(?:https?:)?\/\/[^'")\s;]+/gi, '');
+            css = css.replace(/url\(\s*(['"]?)(?:https?:)?\/\/[^'")\s;]+\1\s*\)/gi, 'url()');
+        }
         if (css.trim()) styleBlock += `<style>${css}</style>`;
     });
 
@@ -522,7 +532,7 @@ function sanitizeEmail(rawHtml) {
     body.querySelectorAll('img, picture source, input[type="image"]').forEach(el => {
         const src = el.getAttribute('src') || '';
         const srcset = el.getAttribute('srcset') || '';
-        const isExtern = isExternalUrl(src) || (srcset && /https?:\/\//i.test(srcset));
+        const isExtern = isExternalUrl(src) || (srcset && /(?:https?:)?\/\//i.test(srcset));
         if (!isExtern) return;
         if (allowImages) {
             const o = el.getAttribute('data-original-src');
@@ -545,14 +555,14 @@ function sanitizeEmail(rawHtml) {
 
     body.querySelectorAll('*[style]').forEach(el => {
         const s = el.getAttribute('style') || '';
-        if (/url\(/i.test(s) && /https?:\/\//i.test(s)) el.setAttribute('style', sanitizeStyleUrls(s, allowAll));
+        if (/url\(/i.test(s) && /(?:https?:)?\/\//i.test(s)) el.setAttribute('style', sanitizeStyleUrls(s, allowAll));
     });
 
     body.querySelectorAll('style').forEach(st => {
         if (allowAll) return;
         let css = st.textContent || '';
-        css = css.replace(/@import\s+(?:url\(\s*)?['"]?https?:\/\/[^'")\s;]+/gi, '');
-        css = css.replace(/url\(\s*['"]?https?:\/\/[^'")\s;]+/gi, 'url()');
+        css = css.replace(/@import\s+(?:url\(\s*)?['"]?(?:https?:)?\/\/[^'")\s;]+/gi, '');
+        css = css.replace(/url\(\s*(['"]?)(?:https?:)?\/\/[^'")\s;]+\1\s*\)/gi, 'url()');
         st.textContent = css;
     });
 
@@ -585,49 +595,61 @@ function buildEmailDocument(rawHtml) {
     const rootStyles = getComputedStyle(document.documentElement);
     const mailBg = rootStyles.getPropertyValue('--mail-body-bg').trim() || '#ffffff';
     const mailText = rootStyles.getPropertyValue('--mail-body-text').trim() || '#17202a';
-    const mailLink = rootStyles.getPropertyValue('--mail-body-link').trim() || '#075985';
     return `<!DOCTYPE html>
 <html lang="zh-CN" style="margin:0;padding:0;">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-${r.styles}
 <style>
   :root { color-scheme: light; }
   html, body { margin:0; padding:0; }
   body {
-    background: ${mailBg} !important;
-    color: ${mailText} !important;
+    background: ${mailBg};
+    color: ${mailText};
     font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     line-height: 1.6;
     overflow-wrap: anywhere;
   }
-  body :where(p, div, span, li, td, th, h1, h2, h3, h4, h5, h6, label, figcaption, strong, b, em, i, small, blockquote, caption, dt, dd) {
-    color: ${mailText} !important;
-  }
-  body :where(table, tr, td, th, section, article, div, p, blockquote) { background-color: transparent !important; }
-  body a { color: ${mailLink} !important; background-color: transparent !important; text-decoration: underline; }
-  body img, body video { max-width: 100%; height: auto; }
-  body table { max-width: 100%; }
-  body pre, body code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* 仅作为无样式邮件的兜底；:where() 保持零优先级，不压过邮件 CSS。 */
+  :where(body img, body video) { max-width: 100%; height: auto; }
+  :where(body table) { max-width: 100%; }
+  :where(body pre, body code) { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
+${r.styles}
 </head>
 <body>${r.body}</body>
 </html>`;
 }
 
+// 取邮件详情中实际用于渲染的正文。检测和渲染必须使用同一份内容，
+// 兼容不同版本接口/缓存中的 html、content、text 和 text_content 字段。
+function getEmailContent(email) {
+    if (!email) return '';
+    return [email.html, email.content, email.text, email.text_content]
+        .find(value => typeof value === 'string' && value.trim()) || '';
+}
+
+function containsRemoteUrl(value) {
+    return /(?:https?:)?\/\/[^\s"'`()<>]+/i.test(String(value || ''));
+}
+
 // 检测是否含外链图片
 function hasExternalImagesOf(html) {
-    return /<img[^>]+(?:https?:)?\/\//i.test(html) ||
-        /<source[^>]+srcset=.*https?:/i.test(html) ||
-        /<input[^>]+type=["']?image[^>]+https?:/i.test(html);
+    const source = String(html || '');
+    return /<img\b[^>]*\bsrc\s*=\s*["'][^"']*(?:https?:)?\/\//i.test(source) ||
+        /<img\b[^>]*\bsrcset\s*=\s*["'][^"']*(?:https?:)?\/\//i.test(source) ||
+        /<source\b[^>]*\b(?:src|srcset)\s*=\s*["'][^"']*(?:https?:)?\/\//i.test(source) ||
+        /<input\b[^>]*\btype\s*=\s*["']?image\b[^>]*\bsrc\s*=\s*["'][^"']*(?:https?:)?\/\//i.test(source);
 }
 // 检测是否含更隐蔽追踪（超出图片级别）
 function hasAdvancedTrackersOf(html) {
-    return /<style[^>]*>[\s\S]*@import/gi.test(html) ||
-        /style=["'][^"']*url\(\s*https?:/i.test(html) ||
-        /<video|<audio/i.test(html) ||
-        /<link[^>]+rel=["']?(?:preload|prefetch)["']?/i.test(html);
+    const source = String(html || '');
+    const styleBlocks = source.match(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi) || [];
+    const inlineStyles = source.match(/\bstyle\s*=\s*["'][^"']*["']/gi) || [];
+    return styleBlocks.some(block => /@import/i.test(block) || containsRemoteUrl(block)) ||
+        inlineStyles.some(style => /url\s*\(/i.test(style) && containsRemoteUrl(style)) ||
+        /<(?:video|audio)\b/i.test(source) ||
+        /<link\b[^>]+\brel\s*=\s*["']?(?:preload|prefetch)["']?/i.test(source);
 }
 
 export {
@@ -651,5 +673,5 @@ export {
     // 安全存储
     storeGet, storeSet, storeRemove,
     // 邮件渲染
-    remoteContentLevel, protectContent, buildEmailDocument, hasExternalImagesOf, hasAdvancedTrackersOf,
+    remoteContentLevel, protectContent, buildEmailDocument, getEmailContent, hasExternalImagesOf, hasAdvancedTrackersOf,
 };

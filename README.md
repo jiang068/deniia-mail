@@ -10,7 +10,6 @@ mail/
 │   ├── README.md     后端部署教程、API 文档
 │   ├── worker.js     后端源码
 │   ├── schema.sql    D1 建表脚本
-│   ├── migrations/   增量迁移脚本
 │   └── wrangler.toml.example  配置模板（复制为 wrangler.toml 填写）
 │
 ├── frontend/         前端（Vue 3 + Vite + Vue Router SPA）
@@ -43,7 +42,7 @@ mail/
    - 配置 `wrangler.toml`（`example.com` → 你的域名、D1 数据库 ID）
    - 在 Cloudflare Secret 中配置 `BOOTSTRAP_TOKEN`（首次初始化）、`RESEND_API_KEY`（发件）和可选的 `RESEND_WEBHOOK_SECRET`（投递状态回调）
    - Cloudflare Email Routing 收件 → Worker
-   - 用 `schema.sql` + `migrations/` 初始化 D1
+   - 新数据库使用完整的 `schema.sql` 初始化；已有生产数据库不要重复初始化
 
 2. **前端**：见 [`frontend/README.md`](frontend/README.md)
    - `npm install` → `npm run build`

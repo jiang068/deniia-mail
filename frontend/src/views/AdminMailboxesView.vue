@@ -2,10 +2,11 @@
 import { ref, computed } from 'vue';
 import {
   isAdmin, apiFetch,
-  formatDate, buildEmailDocument, remoteContentLevel,
+  formatDate, buildEmailDocument, getEmailContent, remoteContentLevel,
 } from '../stores/mail.js';
 import { isMobile } from '../composables/mobileShell.js';
 import EmailFrame from '../components/EmailFrame.vue';
+import EmailSecurityBar from '../components/EmailSecurityBar.vue';
 
 const loadingMailboxes = ref(false);
 const loadingEmails = ref(false);
@@ -24,6 +25,7 @@ const sentEmails = ref([]);
 const selectedEmail = ref(null);
 const viewMode = ref('rendered'); // rendered | html | raw
 const loadingRaw = ref(false);
+let detailRequestSeq = 0;
 
 const DELIVERY_LABELS = {
   sending: '发送中', sent: '已发送', delivered: '已送达',
@@ -34,9 +36,9 @@ function deliveryText(s) { return DELIVERY_LABELS[s] || (s || '—'); }
 
 const protectedContent = computed(() => {
   remoteContentLevel.value;
-  const raw = selectedEmail.value?.html || selectedEmail.value?.text || '';
-  return buildEmailDocument(raw);
+  return buildEmailDocument(getEmailContent(selectedEmail.value));
 });
+const emailContent = computed(() => getEmailContent(selectedEmail.value));
 
 // 移动端：三级下钻（仅收件箱模式有邮箱层级）
 const leftCls = computed(() => {
@@ -62,6 +64,7 @@ const detailCls = computed(() => {
 function resetSelection() {
   selectedEmail.value = null;
   viewMode.value = 'rendered';
+  remoteContentLevel.value = 0;
 }
 
 async function setViewMode(mode) {
@@ -120,6 +123,8 @@ async function openMailbox(mb) {
 }
 
 async function openEmail(mail) {
+  const requestSeq = ++detailRequestSeq;
+  remoteContentLevel.value = 0;
   selectedEmail.value = { ...mail };
   viewMode.value = 'rendered';
   loadingDetail.value = true;
@@ -127,16 +132,19 @@ async function openEmail(mail) {
     const res = await apiFetch(`/api/admin/email/${mail.id}`);
     if (res.ok) {
       const data = await res.json();
+      if (requestSeq !== detailRequestSeq) return;
       selectedEmail.value = { ...mail, ...(data.email || {}) };
     } else {
       const data = await res.json().catch(() => ({}));
       errorMessage.value = data.error || '加载邮件详情失败';
     }
   } catch (e) { errorMessage.value = '加载详情失败: ' + e.message; }
-  finally { loadingDetail.value = false; }
+  finally { if (requestSeq === detailRequestSeq) loadingDetail.value = false; }
 }
 
 async function openSentEmail(sent) {
+  const requestSeq = ++detailRequestSeq;
+  remoteContentLevel.value = 0;
   selectedEmail.value = { ...sent };
   viewMode.value = 'rendered';
   loadingDetail.value = true;
@@ -144,13 +152,14 @@ async function openSentEmail(sent) {
     const res = await apiFetch(`/api/admin/sent/${sent.id}`);
     if (res.ok) {
       const data = await res.json();
+      if (requestSeq !== detailRequestSeq) return;
       selectedEmail.value = { ...sent, ...(data.sent || {}) };
     } else {
       const data = await res.json().catch(() => ({}));
       errorMessage.value = data.error || '加载发件详情失败';
     }
   } catch (e) { errorMessage.value = '加载详情失败: ' + e.message; }
-  finally { loadingDetail.value = false; }
+  finally { if (requestSeq === detailRequestSeq) loadingDetail.value = false; }
 }
 
 function backToMailboxes() { selectedMailbox.value = null; selectedEmail.value = null; }
@@ -261,6 +270,7 @@ if (isAdmin.value) loadMailboxes();
           </template>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
+          <EmailSecurityBar :content="emailContent" :loading="loadingDetail" />
           <template v-if="!loadingDetail">
             <div v-if="viewMode==='rendered'" class="mail-body"><EmailFrame :content="protectedContent" /></div>
             <pre v-else-if="viewMode==='html'" class="mail-source p-4 rounded-lg font-mono text-xs overflow-x-auto whitespace-pre-wrap border border-line">{{ selectedEmail.html || '无 HTML 内容' }}</pre>

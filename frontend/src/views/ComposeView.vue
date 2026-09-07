@@ -3,11 +3,12 @@ import { ref, computed, onMounted } from 'vue';
 import {
   currentMailbox, isAuthenticated,
   mailboxes, selectedMailbox, quota, fetchMailboxes, fetchQuota,
-  switchMailbox, refreshIcons, clearAuth, apiFetch, buildEmailDocument,
+  switchMailbox, refreshIcons, clearAuth, apiFetch, buildEmailDocument, remoteContentLevel,
 } from '../stores/mail.js';
 import { useRouter } from 'vue-router';
 import { isMobile } from '../composables/mobileShell.js';
 import EmailFrame from '../components/EmailFrame.vue';
+import EmailSecurityBar from '../components/EmailSecurityBar.vue';
 
 const props = defineProps({
   to: { type: String, default: '' },
@@ -31,12 +32,17 @@ function escapeHtml(s) {
 }
 
 // 预览：与当前源码/正文保持实时同步（DOMPurify 清洗后，以 iframe 隔离渲染）
-const composerPreview = computed(() => {
+const composerSource = computed(() => {
   if (composerForm.value.html) {
-    return buildEmailDocument(composerForm.value.html);
+    return composerForm.value.html;
   }
   const plain = escapeHtml(composerForm.value.body || '');
-  return buildEmailDocument(`<div style="white-space: pre-wrap; font-family: sans-serif;">${plain}</div>`);
+  return `<div style="white-space: pre-wrap; font-family: sans-serif;">${plain}</div>`;
+});
+
+const composerPreview = computed(() => {
+  remoteContentLevel.value;
+  return buildEmailDocument(composerSource.value);
 });
 
 // 根据 props（来自路由 query）预填 reply / forward
@@ -69,6 +75,7 @@ async function applyQueryHints() {
 }
 
 async function boot() {
+  remoteContentLevel.value = 0;
   await fetchMailboxes();
   await fetchQuota();
   await applyQueryHints();
@@ -165,7 +172,10 @@ onMounted(boot);
         <textarea v-else-if="composerEditMode==='html'" v-model="composerForm.html"
           placeholder="<html><body>HTML 源码...</body></html>"
           class="w-full flex-1 p-3 bg-surface2 text-main border border-line rounded-lg text-xs font-mono resize-none focus:ring-2 ring-accent"></textarea>
-        <div v-else class="w-full flex-1 overflow-y-auto p-3 mail-body-bg border border-line rounded-lg"><EmailFrame :content="composerPreview" /></div>
+        <div v-else class="w-full flex-1 overflow-y-auto p-3 mail-body-bg border border-line rounded-lg">
+          <EmailSecurityBar :content="composerSource" />
+          <EmailFrame :content="composerPreview" />
+        </div>
       </div>
     </div>
 

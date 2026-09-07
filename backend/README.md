@@ -95,11 +95,8 @@ ALLOWED_ORIGINS = "https://compose.example.com"  # 允许调用 API 的前端来
 # 建表
 npx wrangler d1 execute mail-db --file=schema.sql --remote
 
-# 若有增量迁移也要执行（按编号）
-npx wrangler d1 execute mail-db --file=migrations/001_add_delivery_status.sql --remote
-npx wrangler d1 execute mail-db --file=migrations/002_invite_codes.sql --remote
-npx wrangler d1 execute mail-db --file=migrations/003_catchall_whitelist.sql --remote
-npx wrangler d1 execute mail-db --file=migrations/004_performance.sql --remote
+# `schema.sql` 是当前完整结构，仅用于首次初始化新数据库。
+# 已有生产数据库不要重复执行；结构变更应先确认当前库版本后再单独执行。
 ```
 
 ### 5. 配置初始化密钥

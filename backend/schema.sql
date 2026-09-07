@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 
 INSERT OR IGNORE INTO settings (key, value) VALUES ('allow_registration', 'false');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_send_limit', '50');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('catchall_target', '');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('catchall_mode', 'off');
+
+CREATE TABLE IF NOT EXISTS catchall_whitelist (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain_suffix  TEXT    NOT NULL,
+    target         TEXT,
+    note           TEXT,
+    created_at     TEXT    DEFAULT (datetime('now'))
+);
 
 CREATE INDEX IF NOT EXISTS idx_mailboxes_address ON mailboxes(address);
 CREATE INDEX IF NOT EXISTS idx_messages_mailbox_received ON messages(mailbox_id, received_at DESC);
@@ -109,6 +119,7 @@ CREATE INDEX IF NOT EXISTS idx_sent_emails_from_date ON sent_emails(from_addr, c
 CREATE INDEX IF NOT EXISTS idx_sent_emails_status_date ON sent_emails(delivery_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sent_emails_resend ON sent_emails(resend_id);
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code ON invite_codes(code);
+CREATE INDEX IF NOT EXISTS idx_catchall_whitelist_suffix ON catchall_whitelist(domain_suffix);
 
 CREATE TABLE IF NOT EXISTS webhook_events (
     event_id    TEXT PRIMARY KEY,
@@ -117,3 +128,5 @@ CREATE TABLE IF NOT EXISTS webhook_events (
     event_at    TEXT NOT NULL,
     received_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_resend ON webhook_events(resend_id, event_at DESC);
